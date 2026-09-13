@@ -28,4 +28,17 @@ describe('PDN corpus', () => {
     expect(report.continuations[0].move).toBe('c3-d4');
     expect(report.whiteWins).toBe(1);
   });
+
+  it('rejects another draughts variant instead of polluting the corpus', () => {
+    const result = parsePdn(`[Event "International"]\n[GameType "20"]\n[Result "2-0"]\n\n1. 32-28 19-23 2-0`);
+    expect(result.games).toHaveLength(0);
+    expect(result.errors[0]).toMatch(/GameType 20/);
+    expect(result.errors[0]).toMatch(/GameType 25/);
+  });
+
+  it('rejects numeric move notation when game type is missing', () => {
+    const result = parsePdn(`[Event "Unknown"]\n\n1. 32-28 19-23 1-0`);
+    expect(result.games).toHaveLength(0);
+    expect(result.errors[0]).toMatch(/цифровая нотация/);
+  });
 });
