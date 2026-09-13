@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INITIAL_POSITION, packPosition, positionKey, setPiece, unpackPosition } from './position';
+import { INITIAL_POSITION, packPosition, positionFromKey, positionKey, setPiece, unpackPosition } from './position';
 
 describe('position representation', () => {
   it('packs and unpacks four uint32 bitboards without loss', () => {
@@ -11,10 +11,18 @@ describe('position representation', () => {
     expect(positionKey(INITIAL_POSITION)).not.toBe(positionKey({ ...INITIAL_POSITION, sideToMove: 'B' }));
   });
 
+  it('roundtrips the compact database key', () => {
+    const position = { ...INITIAL_POSITION, whiteKings: 0x00010000, whiteMen: 0xffe00000, sideToMove: 'B' as const };
+    expect(positionFromKey(positionKey(position))).toEqual(position);
+  });
+
+  it('rejects malformed compact position keys', () => {
+    expect(() => positionFromKey('W:1234:5678')).toThrow(/ключ позиции/i);
+  });
+
   it('keeps a square exclusive when replacing a piece', () => {
     const position = setPiece(INITIAL_POSITION, 1, 'white-king');
     expect(position.blackMen & 1).toBe(0);
     expect(position.whiteKings & 1).toBe(1);
   });
 });
-
