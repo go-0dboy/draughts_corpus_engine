@@ -19,4 +19,10 @@ describe('Russian algebraic moves', () => {
     expect(pieceAt(position, algebraicToSquare('e5'))).toBeNull();
     expect(pieceAt(position, algebraicToSquare('f6'))).toBe('white-man');
   });
+
+  it('normalizes historical x, typographic × and separator whitespace', () => {
+    expect(parseRussianMove('d4 x f6').notation).toBe('d4:f6');
+    expect(parseRussianMove('d4×f6').notation).toBe('d4:f6');
+    expect(parseRussianMove('d4 : f6 !').notation).toBe('d4:f6');
+  });
 });
