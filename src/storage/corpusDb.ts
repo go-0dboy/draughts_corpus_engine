@@ -105,8 +105,7 @@ export async function openCorpusDb(): Promise<IDBDatabase> {
     request.onerror = () => reject(request.error ?? new Error('Не удалось открыть локальную базу корпуса.'));
     request.onupgradeneeded = () => {
       const db = request.result;
-      const games = db.createObjectStore(STORES.games, { keyPath: 'id' });
-      void games;
+      db.createObjectStore(STORES.games, { keyPath: 'id' });
 
       const summaries = db.createObjectStore(STORES.summaries, { keyPath: 'id' });
       summaries.createIndex('date', 'date', { unique: false });
@@ -129,9 +128,11 @@ export async function getCorpusStats(): Promise<CorpusStats> {
   const db = await openCorpusDb();
   try {
     const tx = db.transaction([STORES.summaries, STORES.positions], 'readonly');
-    const games = await requestValue(tx.objectStore(STORES.summaries).count());
-    const positions = await requestValue(tx.objectStore(STORES.positions).count());
-    await transactionDone(tx);
+    const done = transactionDone(tx);
+    const gamesPromise = requestValue(tx.objectStore(STORES.summaries).count());
+    const positionsPromise = requestValue(tx.objectStore(STORES.positions).count());
+    const [games, positions] = await Promise.all([gamesPromise, positionsPromise]);
+    await done;
     return { games, positions };
   } finally {
     db.close();
@@ -145,13 +146,14 @@ export async function listGames(options: { query?: string; offset?: number; limi
     const limit = Math.max(1, Math.min(200, options.limit ?? 40));
     const normalizedQuery = normalizeSearch(options.query ?? '');
     const tx = db.transaction(STORES.summaries, 'readonly');
+    const done = transactionDone(tx);
     const store = tx.objectStore(STORES.summaries);
 
     const result = normalizedQuery
       ? await searchSummaries(store, normalizedQuery, offset, limit)
       : await pageSummaries(store, offset, limit);
 
-    await transactionDone(tx);
+    await done;
     return result;
   } finally {
     db.close();
@@ -162,8 +164,9 @@ export async function getStoredGame(id: string): Promise<StoredGame | null> {
   const db = await openCorpusDb();
   try {
     const tx = db.transaction(STORES.games, 'readonly');
+    const done = transactionDone(tx);
     const value = await requestValue<StoredGame | undefined>(tx.objectStore(STORES.games).get(id));
-    await transactionDone(tx);
+    await done;
     return value ?? null;
   } finally {
     db.close();
@@ -173,14 +176,15 @@ export async function getStoredGame(id: string): Promise<StoredGame | null> {
 export async function loadGameForViewer(id: string): Promise<PdnGame | null> {
   const db = await openCorpusDb();
   try {
-    const tx = db.transaction([STORES.games, STORES.positions], 'readonly');
-    const game = await requestValue<StoredGame | undefined>(tx.objectStore(STORES.games).get(id));
-    if (!game) {
-      await transactionDone(tx);
-      return null;
-    }
+    const gameTx = db.transaction(STORES.games, 'readonly');
+    const gameDone = transactionDone(gameTx);
+    const game = await requestValue<StoredGame | undefined>(gameTx.objectStore(STORES.games).get(id));
+    await gameDone;
+    if (!game) return null;
 
-    const positionStore = tx.objectStore(STORES.positions);
+    const positionTx = db.transaction(STORES.positions, 'readonly');
+    const positionDone = transactionDone(positionTx);
+    const positionStore = positionTx.objectStore(STORES.positions);
     const positions = await Promise.all(
       game.positionKeys.map(async (key) => {
         const stored = await requestValue<StoredPositionStats | undefined>(positionStore.get(key));
@@ -188,7 +192,7 @@ export async function loadGameForViewer(id: string): Promise<PdnGame | null> {
         return stored.position;
       }),
     );
-    await transactionDone(tx);
+    await positionDone;
 
     return {
       id: game.id,
@@ -210,12 +214,14 @@ export async function getPositionReport(position: Position): Promise<PositionDbR
   const db = await openCorpusDb();
   try {
     const tx = db.transaction([STORES.positions, STORES.continuations], 'readonly');
-    const stats = await requestValue<StoredPositionStats | undefined>(tx.objectStore(STORES.positions).get(key));
-    const continuations = await allByIndex<StoredContinuation>(
+    const done = transactionDone(tx);
+    const statsPromise = requestValue<StoredPositionStats | undefined>(tx.objectStore(STORES.positions).get(key));
+    const continuationsPromise = allByIndex<StoredContinuation>(
       tx.objectStore(STORES.continuations).index('positionKey'),
       IDBKeyRange.only(key),
     );
-    await transactionDone(tx);
+    const [stats, continuations] = await Promise.all([statsPromise, continuationsPromise]);
+    await done;
 
     return {
       key,
@@ -239,14 +245,23 @@ export async function listPositionOccurrences(
   const limit = Math.max(1, Math.min(100, options.limit ?? 30));
   const db = await openCorpusDb();
   try {
-    const tx = db.transaction([STORES.occurrences, STORES.summaries], 'readonly');
-    const occurrenceStore = tx.objectStore(STORES.occurrences).index('positionKey');
-    const occurrences = await pageByIndex<StoredOccurrence>(occurrenceStore, IDBKeyRange.only(key), offset, limit);
-    const summaryStore = tx.objectStore(STORES.summaries);
+    const occurrenceTx = db.transaction(STORES.occurrences, 'readonly');
+    const occurrenceDone = transactionDone(occurrenceTx);
+    const occurrences = await pageByIndex<StoredOccurrence>(
+      occurrenceTx.objectStore(STORES.occurrences).index('positionKey'),
+      IDBKeyRange.only(key),
+      offset,
+      limit,
+    );
+    await occurrenceDone;
+
+    const summaryTx = db.transaction(STORES.summaries, 'readonly');
+    const summaryDone = transactionDone(summaryTx);
+    const summaryStore = summaryTx.objectStore(STORES.summaries);
     const summaries = await Promise.all(
       occurrences.map((occurrence) => requestValue<GameSummary | undefined>(summaryStore.get(occurrence.gameId))),
     );
-    await transactionDone(tx);
+    await summaryDone;
 
     return occurrences.map((occurrence, index) => {
       const summary = summaries[index];
@@ -273,11 +288,12 @@ export async function storeGamesBatch(games: readonly PdnGame[]): Promise<StoreB
   const db = await openCorpusDb();
   try {
     const existingTx = db.transaction(STORES.games, 'readonly');
+    const existingDone = transactionDone(existingTx);
     const existingStore = existingTx.objectStore(STORES.games);
     const exists = await Promise.all(
       normalized.map(({ stored }) => requestValue<IDBValidKey | undefined>(existingStore.getKey(stored.id))),
     );
-    await transactionDone(existingTx);
+    await existingDone;
 
     const fresh = normalized.filter((_, index) => exists[index] === undefined);
     if (fresh.length === 0) {
@@ -333,6 +349,7 @@ export async function storeGamesBatch(games: readonly PdnGame[]): Promise<StoreB
       [STORES.games, STORES.summaries, STORES.positions, STORES.occurrences, STORES.continuations],
       'readwrite',
     );
+    const done = transactionDone(tx);
     const gameStore = tx.objectStore(STORES.games);
     const summaryStore = tx.objectStore(STORES.summaries);
     const positionStore = tx.objectStore(STORES.positions);
@@ -376,7 +393,7 @@ export async function storeGamesBatch(games: readonly PdnGame[]): Promise<StoreB
       };
     }
 
-    await transactionDone(tx);
+    await done;
     return {
       insertedGames: fresh.length,
       skippedGames: games.length - fresh.length,
@@ -392,8 +409,9 @@ export async function clearCorpusDatabase(): Promise<void> {
   const db = await openCorpusDb();
   try {
     const tx = db.transaction(Object.values(STORES), 'readwrite');
+    const done = transactionDone(tx);
     for (const name of Object.values(STORES)) tx.objectStore(name).clear();
-    await transactionDone(tx);
+    await done;
   } finally {
     db.close();
   }
