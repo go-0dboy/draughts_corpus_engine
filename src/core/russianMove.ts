@@ -3,20 +3,38 @@ import { pieceAt, setPiece } from './position';
 import type { Piece, Position, Side } from './types';
 
 export interface RussianMove {
+  /** Canonical application notation. Captures are normalized to ':' internally. */
   notation: string;
+  /** Original notation after trimming annotations. */
+  sourceNotation: string;
   path: number[];
   isCapture: boolean;
 }
 
+/**
+ * Reads Russian draughts move notation.
+ *
+ * Strict PDN 3.0 uses ':' for GameType 25 captures, while historical corpora
+ * commonly contain 'x'. The reader accepts both; the domain model normalizes
+ * captures to ':' without losing sourceNotation.
+ */
 export function parseRussianMove(raw: string): RussianMove {
-  const notation = raw.trim().replace(/[!?]+$/g, '');
-  const hasMove = notation.includes('-');
-  const hasCapture = notation.includes(':');
+  const sourceNotation = raw.trim().replace(/[!?]+$/g, '');
+  const hasMove = sourceNotation.includes('-');
+  const hasCapture = /[x:]/i.test(sourceNotation);
   if (hasMove === hasCapture) throw new Error(`Некорректная запись хода: ${raw}`);
-  const separator = hasCapture ? ':' : '-';
-  const path = notation.split(separator).map(algebraicToSquare);
+
+  const parts = hasCapture ? sourceNotation.split(/[x:]/i) : sourceNotation.split('-');
+  const path = parts.map(algebraicToSquare);
   if (path.length < 2) throw new Error(`Неполная запись хода: ${raw}`);
-  return { notation: path.map(squareToAlgebraic).join(separator), path, isCapture: hasCapture };
+
+  const separator = hasCapture ? ':' : '-';
+  return {
+    notation: path.map(squareToAlgebraic).join(separator),
+    sourceNotation,
+    path,
+    isCapture: hasCapture,
+  };
 }
 
 export function applyRussianMove(position: Position, move: RussianMove): Position {
@@ -35,14 +53,24 @@ export function applyRussianMove(position: Position, move: RussianMove): Positio
     const target = move.path[index];
     if (pieceAt(next, target)) throw new Error(`Поле ${squareToAlgebraic(target)} занято.`);
     const between = diagonalBetween(current, target);
-    if (!between) throw new Error('Ход должен идти по диагонали.');
+    if (!between) {
+      throw new Error(
+        'Сокращённое взятие нельзя восстановить геометрически; требуется полный генератор легальных взятий.',
+      );
+    }
     const occupied = between.filter((square) => pieceAt(next, square));
 
     if (move.isCapture) {
       if (!isKing(movingPiece) && diagonalDistance(current, target) !== 2) {
-        throw new Error('Простая шашка при взятии перепрыгивает одну соседнюю шашку.');
+        throw new Error(
+          'Сокращённое многошаговое взятие простой шашки требует разрешения через генератор легальных ходов.',
+        );
       }
-      if (occupied.length !== 1) throw new Error('Каждый участок взятия должен пересекать ровно одну шашку соперника.');
+      if (occupied.length !== 1) {
+        throw new Error(
+          'Сокращённое взятие требует разрешения через генератор легальных ходов.',
+        );
+      }
       const capturedSquare = occupied[0];
       if (captured.has(capturedSquare)) throw new Error('Одну шашку нельзя брать дважды.');
       const victim = pieceAt(next, capturedSquare);
