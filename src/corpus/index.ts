@@ -1,6 +1,7 @@
 import { positionKey } from '../core/position';
 import type { Position } from '../core/types';
 import type { PdnGame } from './pdn';
+import { classifyResult } from './result';
 
 export interface PositionOccurrence {
   gameId: string;
@@ -29,13 +30,24 @@ export interface PositionReport {
   blackWins: number;
 }
 
+/**
+ * Transitional in-memory index.
+ *
+ * Only games whose current replay layer completed are indexed. Importing game
+ * metadata is allowed even when a legacy shortened capture cannot yet be
+ * resolved, but such a game must not pollute position statistics.
+ */
 export class CorpusIndex {
   readonly games: PdnGame[];
   private readonly byPosition = new Map<string, PositionOccurrence[]>();
+  private indexedGames = 0;
 
   constructor(games: PdnGame[]) {
     this.games = games;
     for (const game of games) {
+      if (game.replay.status !== 'complete') continue;
+      this.indexedGames += 1;
+
       game.positions.forEach((position, ply) => {
         const key = positionKey(position);
         const list = this.byPosition.get(key) ?? [];
@@ -62,9 +74,10 @@ export class CorpusIndex {
     let blackWins = 0;
 
     for (const occurrence of occurrences) {
-      if (occurrence.result === '1-0') whiteWins += 1;
-      else if (occurrence.result === '0-1') blackWins += 1;
-      else if (occurrence.result === '1/2-1/2') draws += 1;
+      const outcome = classifyResult(occurrence.result);
+      if (outcome === 'white-win') whiteWins += 1;
+      else if (outcome === 'black-win') blackWins += 1;
+      else if (outcome === 'draw') draws += 1;
 
       if (!occurrence.moveAfter) continue;
       const stat = continuations.get(occurrence.moveAfter) ?? {
@@ -75,9 +88,9 @@ export class CorpusIndex {
         blackWins: 0,
       };
       stat.games += 1;
-      if (occurrence.result === '1-0') stat.whiteWins += 1;
-      else if (occurrence.result === '0-1') stat.blackWins += 1;
-      else if (occurrence.result === '1/2-1/2') stat.draws += 1;
+      if (outcome === 'white-win') stat.whiteWins += 1;
+      else if (outcome === 'black-win') stat.blackWins += 1;
+      else if (outcome === 'draw') stat.draws += 1;
       continuations.set(occurrence.moveAfter, stat);
     }
 
@@ -93,5 +106,13 @@ export class CorpusIndex {
 
   uniquePositionCount(): number {
     return this.byPosition.size;
+  }
+
+  indexedGameCount(): number {
+    return this.indexedGames;
+  }
+
+  pendingReplayGameCount(): number {
+    return this.games.length - this.indexedGames;
   }
 }
