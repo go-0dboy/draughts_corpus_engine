@@ -1,4 +1,4 @@
-import { positionKey } from '../core/position';
+import { positionFromKey, positionKey } from '../core/position';
 import type { Position } from '../core/types';
 import type { PdnGame, PdnReplayInfo } from '../corpus/pdn';
 import { classifyResult } from '../corpus/result';
@@ -39,9 +39,12 @@ export interface GameSummary {
   searchTokens: string[];
 }
 
+/**
+ * The key itself is the position payload: side + two 64-bit hexadecimal words.
+ * Keeping another four-bitboard object here would duplicate millions of values.
+ */
 export interface StoredPositionStats {
   key: string;
-  position: Position;
   occurrences: number;
   whiteWins: number;
   draws: number;
@@ -189,7 +192,7 @@ export async function loadGameForViewer(id: string): Promise<PdnGame | null> {
       game.positionKeys.map(async (key) => {
         const stored = await requestValue<StoredPositionStats | undefined>(positionStore.get(key));
         if (!stored) throw new Error(`Позиция ${key} отсутствует в словаре корпуса.`);
-        return stored.position;
+        return positionFromKey(key);
       }),
     );
     await positionDone;
@@ -311,15 +314,12 @@ export async function storeGamesBatch(games: readonly PdnGame[]): Promise<StoreB
         const outcome = classifyResult(item.game.result);
         const delta = positionDeltas.get(key) ?? {
           key,
-          position: { ...position },
           occurrences: 0,
           whiteWins: 0,
           draws: 0,
           blackWins: 0,
         };
 
-        // Every safely reconstructed position belongs to the dictionary so the
-        // game viewer can use it. Only complete replays contribute statistics.
         if (trustworthy) {
           delta.occurrences += 1;
           if (outcome === 'white-win') delta.whiteWins += 1;
@@ -376,7 +376,6 @@ export async function storeGamesBatch(games: readonly PdnGame[]): Promise<StoreB
         const current = request.result as StoredPositionStats | undefined;
         positionStore.put({
           key: delta.key,
-          position: current?.position ?? delta.position,
           occurrences: (current?.occurrences ?? 0) + delta.occurrences,
           whiteWins: (current?.whiteWins ?? 0) + delta.whiteWins,
           draws: (current?.draws ?? 0) + delta.draws,
