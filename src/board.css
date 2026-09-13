@@ -1,13 +1,30 @@
 /*
- * Board presentation is intentionally isolated from the application theme.
- * The 8x8 playing surface is always a mathematically square grid. Coordinates
- * live in the frame around it and never consume space inside a square.
+ * The board owns its geometry and piece presentation, while `data-board=auto`
+ * deliberately follows the resolved application theme. Explicit board skins
+ * stay available for users who prefer a traditional palette.
  */
+
+:root[data-board='auto'][data-theme='dark'] {
+  --board-light: #b8c5bd;
+  --board-dark: #52665b;
+  --board-frame-color: #171f1b;
+  --board-coordinate-color: #c7d3cc;
+  --board-highlight: #e5bf62;
+}
+
+:root[data-board='auto'][data-theme='light'] {
+  --board-light: #eef2ee;
+  --board-dark: #8da496;
+  --board-frame-color: #dde6df;
+  --board-coordinate-color: #435148;
+  --board-highlight: #ba8325;
+}
 
 :root[data-board='classic'] {
   --board-light: #e9d9b2;
   --board-dark: #8a6445;
   --board-frame-color: #4f3928;
+  --board-coordinate-color: #f3e7d3;
   --board-highlight: #e8b94f;
 }
 
@@ -15,6 +32,7 @@
   --board-light: #e9dfbd;
   --board-dark: #70816f;
   --board-frame-color: #303a34;
+  --board-coordinate-color: #e2eae4;
   --board-highlight: #e9c75d;
 }
 
@@ -22,6 +40,7 @@
   --board-light: #c9ccc8;
   --board-dark: #626a66;
   --board-frame-color: #292f2c;
+  --board-coordinate-color: #dde3df;
   --board-highlight: #e6bd58;
 }
 
@@ -29,6 +48,7 @@
   --board-light: #ead8b2;
   --board-dark: #a18460;
   --board-frame-color: #594b3a;
+  --board-coordinate-color: #f3e5ca;
   --board-highlight: #d7a53d;
 }
 
@@ -36,6 +56,7 @@
   --board-light: #ead6c5;
   --board-dark: #8a514a;
   --board-frame-color: #4a2928;
+  --board-coordinate-color: #f0ddd9;
   --board-highlight: #e7bd55;
 }
 
@@ -43,6 +64,7 @@
   --board-light: #d5e0dc;
   --board-dark: #58747a;
   --board-frame-color: #2d4146;
+  --board-coordinate-color: #dbe9e9;
   --board-highlight: #f0c65b;
 }
 
@@ -50,6 +72,7 @@
   --board-light: #e5e3df;
   --board-dark: #87908b;
   --board-frame-color: #3c4541;
+  --board-coordinate-color: #edf0ee;
   --board-highlight: #d7b34f;
 }
 
@@ -65,16 +88,16 @@
   grid-template-columns: var(--board-coord-rail) minmax(0, 1fr) var(--board-coord-rail);
   grid-template-rows: var(--board-coord-rail) auto var(--board-coord-rail);
   padding: 3px;
-  border: 1px solid rgba(255, 255, 255, .09);
-  border-radius: 19px;
+  border: 1px solid color-mix(in srgb, var(--board-frame-color) 72%, var(--outline-soft));
+  border-radius: 18px;
   background: var(--board-frame-color, #28302c);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, .24);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
   overflow: hidden;
   user-select: none;
 }
 
 .board-coords {
-  color: rgba(229, 235, 231, .68);
+  color: var(--board-coordinate-color, rgba(229, 235, 231, .72));
   font-size: clamp(.54rem, 2.2vw, .68rem);
   font-weight: 720;
   line-height: 1;
@@ -109,10 +132,10 @@
   grid-template-columns: repeat(8, minmax(0, 1fr));
   grid-template-rows: repeat(8, minmax(0, 1fr));
   border: 0;
-  border-radius: 4px;
+  border-radius: 3px;
   overflow: hidden;
   background: var(--board-dark);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .30);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .24);
   isolation: isolate;
 }
 
@@ -192,12 +215,11 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 32%, transparent);
 }
 
-/* Compact phones keep the coordinate frame visible without shrinking the board too far. */
 @media (max-width: 370px) {
   .board-frame {
     --board-coord-rail: 15px;
     padding: 2px;
-    border-radius: 17px;
+    border-radius: 16px;
   }
   .board-coords { font-size: .54rem; }
 }
