@@ -1,49 +1,114 @@
 # Draughts Corpus Engine
 
-Мобильное Android-приложение и исследовательская платформа для корпуса партий в русские шашки.
+**Library-first ядро + мобильное Android-приложение** для исследования корпуса партий в русские шашки.
 
-Главный продукт проектируется **mobile-first**. Та же TypeScript/React-кодовая база публикуется в Web через GitHub Pages и собирается в Android через Capacitor.
+Android проектируется как основной продукт. TypeScript/React UI собирается через Capacitor в APK и одновременно может публиковаться через GitHub Pages. Главное отличие архитектуры: правила, позиции, PDN, corpus queries и аналитические tools не должны зависеть от React или конкретной БД.
 
-## Что должно уметь приложение
+## Архитектура
 
-- хранить и пополнять корпус PDN-партий;
-- дедуплицировать позиции;
-- быстро находить все партии, где встречалась позиция;
-- показывать продолжения и статистику результатов;
-- просматривать партию по ходам;
-- искать позицию по FEN;
-- постепенно подключать дебютный анализ, поиск комбинаций, аномалий, статистику игроков и оценку позиции;
-- позже использовать локальную нейросеть и AI-agent поверх точных инструментов корпуса.
+```text
+Mobile / Web UI
+      ↓
+Application use-cases
+      ↓
+Public Corpus API
+      ↓
+Core / PDN / Storage adapters
+      ↑
+Analysis Tool Registry
+```
 
-Полная рабочая карта: [docs/development-roadmap.md](docs/development-roadmap.md).
+Аналитический инструмент работает через стабильный `CorpusReadApi`. Новый tool можно добавить без прямого доступа к SQLite/IndexedDB и без изменения ядра интерфейса.
 
-## Текущий этап — Sprint 1: Mobile shell
+Документы:
 
-Уже реализовано:
+- [Карта разработки](docs/development-roadmap.md)
+- [Архитектурные решения](docs/architecture-decisions.md)
+- [Mobile UX / Design System](docs/design-system.md)
+- [Анализ реального russian2012.pdn](docs/corpus-analysis-russian2012.md)
+- [Базовая архитектура данных](docs/architecture.md)
 
-- TypeScript + React + Vite;
-- Capacitor для Android;
-- GitHub Pages и CI;
-- четыре `uint32` bitboard и упаковка позиции в два `uint64` (`bigint`);
-- `sideToMove` как часть позиции;
-- буквенная нотация русских шашек (`a1-h8`, `c3-d4`, `d4:f6`);
-- алгебраический FEN по умолчанию;
-- первый импорт основной линии PDN;
-- первый индекс `позиция -> вхождения`;
-- статистика продолжений;
-- mobile-first оболочка с экранами **Партии / Позиция / Импорт / Инструменты**;
-- отдельный мобильный viewer партии;
-- импорт чужого `GameType` блокируется: для русских шашек ожидается `GameType 25`.
+## Реальный corpus benchmark
 
-## Важно про нотацию и GameType
+Предоставленный `russian2012.pdn` используется как compatibility benchmark, а не как демонстрационный файл. Полный scan показывает:
 
-Для русских шашек используется `GameType "25,W,8,8,A0,0"`.
+- 109 616 партий;
+- около 5,2 млн записей ходов;
+- 6 496 стартовых FEN;
+- `GameType 25`;
+- результаты `2-0 / 1-1 / 0-2 / *`;
+- исторический separator взятия `x` используется намного чаще `:`;
+- comments, RAV и NAG;
+- сокращённые многошаговые взятия, где PDN хранит только начальное и конечное поле.
 
-Пользовательский интерфейс проекта не использует цифровую нотацию полей. Внутренний индекс 1..32 существует только для адресации bitboard и наружу не показывается.
+Из этого следует: большой официальный корпус не должен загружаться через `File.text()` в React state. Он собирается офлайн Node corpus builder-ом в готовую индексированную read-only базу. Пользовательские партии импортируются отдельно в локальную writable library.
 
-Если импортируемый файл явно содержит другой `GameType` (например `20` для международных шашек 10×10), он отклоняется и не попадает в корпус.
+## Что уже реализовано
 
-## Запуск
+### Core
+
+- четыре `uint32` bitboard;
+- упаковка позиции в два `uint64` (`bigint`);
+- `sideToMove` в идентичности позиции;
+- algebraic mapping `a1-h8`;
+- FEN reader/writer;
+- генератор легальных ходов русских шашек;
+- обязательное взятие;
+- взятие простой вперёд и назад;
+- летающая дамка;
+- многошаговые взятия;
+- побитые шашки остаются блокерами до окончания серии;
+- превращение во время взятия и продолжение как дамкой;
+- восстановление сокращённого исторического взятия через legal-move generation.
+
+### PDN / corpus
+
+- transitional tolerant main-line reader;
+- arbitrary header order для реального корпуса;
+- `x` и `:` при чтении;
+- legacy numeric FEN при чтении;
+- `2-0 / 1-1 / 0-2` и chess-style result normalization;
+- replay problem не удаляет всю партию;
+- позиционный индекс строится только для достоверно воспроизведённых партий;
+- сохранение исходного source на текущем переходном этапе.
+
+### Library API / tools
+
+- async `CorpusReadApi`;
+- `CorpusWriteRepository` contract;
+- development `MemoryCorpus` adapter;
+- `AnalysisTool` contract;
+- `ToolRegistry`;
+- первый tool — Position Statistics;
+- storage-independent domain `Game` model;
+- structured `ImportReport` / diagnostics contract.
+
+### Mobile
+
+- React + Vite + Capacitor;
+- mobile-first shell;
+- Партии / Позиция / Импорт / Инструменты;
+- отдельный viewer партии;
+- GitHub Pages;
+- GitHub Actions test + build.
+
+## Проверка корпуса
+
+Потоковый scanner не загружает весь файл в память:
+
+```bash
+npm run corpus:inspect -- ./russian2012.pdn
+```
+
+Можно сохранить JSON-отчёт:
+
+```bash
+npm run corpus:inspect -- ./russian2012.pdn ./corpus-report.json
+```
+
+Scanner используется для воспроизводимого corpus discovery. Следующий CLI — полноценный builder positions/games/transitions.
+
+## Запуск приложения
 
 Нужен Node.js 24 или новее.
 
@@ -71,25 +136,21 @@ npm run android:open
 
 Debug APK также собирается через GitHub Actions.
 
-## GitHub Pages
+## Нотация
 
-После push в `main` workflow собирает `dist/` и публикует ту же программу через GitHub Pages. Web-версия вторична по отношению к Android, но используется для быстрой проверки интерфейса и логики.
+Пользовательский интерфейс русских шашек использует только поля `a1-h8` и ходы вроде:
 
-## Ограничения текущей версии
+```text
+c3-d4
+d4:f6
+```
 
-Текущий PDN importer — ещё не полноценный tolerant PDN 3.0 parser. Пока индексируется основная линия, а комментарии/варианты не становятся полноценным AST.
+Внутренняя 1..32 адресация существует только для bitboard и не является пользовательской нотацией.
 
-Также текущий replay не заменяет законченный генератор всех легальных ходов. До массовой загрузки исторического корпуса будет реализован отдельный rules engine с обязательным взятием, летающей дамкой, корректными многоходовыми взятиями и полной проверкой легальности.
+Reader исторических данных принимает `x` как legacy separator (`d4xf6`), сохраняя исходную запись. Канонический writer будет выдавать `:`.
 
-## Ближайшие этапы
+## Что делаем дальше
 
-1. Завершить mobile shell и UX на ширинах 360–430 px.
-2. Полный rules engine русских шашек.
-3. Tolerant PDN 3.0 parser + AST + lossless экспорт.
-4. Постоянное хранилище и массовый импорт в worker.
-5. Полноценный Position Explorer.
-6. Opening/Player/Combination/Anomaly инструменты.
-7. Оценка позиции и нейросетевая модель.
-8. Agent-слой поверх API аналитических инструментов.
+Ближайший технический приоритет — **Published Corpus Builder**: потоково разобрать весь `russian2012.pdn`, воспроизвести партии через Rules Engine, дедуплицировать позиции, агрегировать transitions и построить первую постоянную базу. После benchmark выбирается финальный storage backend для Android/Web.
 
-Архитектура: [docs/architecture.md](docs/architecture.md).
+Параллельно mobile UI переводится на public `src/engine` API и обновляется по [design system](docs/design-system.md): SVG icons, compact app bars, меньше тяжёлых карточек, viewer с position bottom sheet и корректные loading/progress/error states.
