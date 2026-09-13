@@ -100,6 +100,19 @@ export function positionKey(position: Position): string {
   return `${position.sideToMove}:${toHex64(packed.white)}:${toHex64(packed.black)}`;
 }
 
+/** Reverse positionKey() without storing another copy of the four bitboards. */
+export function positionFromKey(key: string): Position {
+  const match = /^(W|B):([0-9A-Fa-f]{16}):([0-9A-Fa-f]{16})$/.exec(key);
+  if (!match) throw new Error(`Некорректный ключ позиции: ${key}`);
+  return unpackPosition(
+    {
+      white: BigInt(`0x${match[2]}`),
+      black: BigInt(`0x${match[3]}`),
+    },
+    match[1] as Side,
+  );
+}
+
 export function toHex64(value: bigint): string {
   return value.toString(16).padStart(16, '0').toUpperCase();
 }
@@ -120,4 +133,3 @@ export function countPieces(position: Position): { white: number; black: number;
     kings: popcount(position.whiteKings) + popcount(position.blackKings),
   };
 }
-
