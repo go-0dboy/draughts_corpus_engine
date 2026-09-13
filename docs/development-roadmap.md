@@ -2,267 +2,361 @@
 
 ## Цель продукта
 
-Создать полноценное **мобильное Android-приложение** для исследования корпуса партий в русские шашки.
+Создать полноценное **мобильное Android-приложение** для исследования корпуса партий в русские шашки, построенное поверх независимого библиотечного ядра.
 
-- основной продукт — Android;
-- одна кодовая база на TypeScript/React;
-- APK собирается через Node.js + Capacitor;
-- та же сборка доступна через GitHub Pages;
-- приложение должно работать без обязательного собственного сервера;
-- интерфейс проектируется **mobile-first** для портретного телефона от ~360 px;
-- пользовательская нотация русских шашек — алгебраическая (`a1-h8`, `c3-d4`, `d4:f6`);
-- внутренние bitboard-индексы никогда не должны становиться пользовательской нотацией.
+Главные требования:
 
-## Архитектурные слои
+- Android — основной продукт;
+- TypeScript/React + Capacitor;
+- APK собирается через Node.js;
+- та же UI-сборка может работать на GitHub Pages;
+- приложение не требует собственного сервера для базовых функций;
+- интерфейс mobile-first;
+- пользовательская нотация — алгебраическая `a1-h8`;
+- большой исторический корпус поставляется как готовая опубликованная база;
+- новые пользовательские партии добавляются локально;
+- аналитические возможности расширяются через независимые tools/plugins.
+
+## Главный архитектурный принцип
 
 ```text
-Mobile UI / Web UI
-        ↓
-Application services
-        ↓
-Corpus engine
-        ↓
-Rules / PDN / Position core
-        ↓
-Storage adapters
+Mobile/Web UI
+     ↓
+Application use-cases
+     ↓
+Public Corpus API
+     ↓
+┌───────────┬───────────┬────────────┐
+│ Core      │ PDN       │ Storage    │
+│ rules     │ reader    │ adapters   │
+│ position  │ writer    │            │
+└───────────┴───────────┴────────────┘
+     ↑
+Analysis Tools Registry
 ```
 
-Приложение не должно связывать интерфейс напрямую с конкретной БД. Аналитические инструменты подключаются отдельными модулями поверх общего API корпуса.
+UI и инструменты не знают внутреннюю схему SQLite/IndexedDB и не вызывают parser напрямую.
+
+Подробности: `docs/architecture-decisions.md`.
 
 ---
 
-## Этап 0 — фундамент проекта — В РАБОТЕ
+# Этап 0 — Product/Corpus Discovery — ЗАВЕРШЁН ДЛЯ ПЕРВОЙ ИТЕРАЦИИ
 
-Цель: единая сборка Android/Web и минимальное ядро русских шашек.
+Результаты анализа реального `russian2012.pdn`:
 
-- [x] TypeScript + React + Vite;
-- [x] Capacitor;
-- [x] GitHub Pages workflow;
-- [x] GitHub Actions CI;
-- [x] четыре 32-битных bitboard;
-- [x] упаковка позиции в два 64-битных значения;
-- [x] `sideToMove` как часть позиции;
-- [x] преобразование внутренних полей в `a1-h8`;
-- [x] чтение/запись FEN;
-- [x] базовый импорт основной линии PDN;
-- [x] первый индекс `position -> occurrences`;
-- [ ] убрать остатки desktop-first UI.
+- 109 616 партий;
+- ~5,2 млн ходов;
+- 6 496 стартовых FEN;
+- все партии `GameType 25`;
+- legacy capture separator `x` используется значительно чаще `:`;
+- присутствуют comments, RAV, NAG;
+- множество многошаговых взятий записаны сокращённо только start/end;
+- результаты представлены как `2-0 / 1-1 / 0-2 / *`.
 
-Критерий завершения: код собирается в Web и Android, публичный интерфейс нигде не использует цифровую шашечную нотацию.
+Документ: `docs/corpus-analysis-russian2012.md`.
 
----
+Следствия:
 
-## Этап 1 — мобильная оболочка приложения — ТЕКУЩИЙ ЭТАП
-
-Цель: приложение должно выглядеть и вести себя как Android-приложение, а не как десктопный сайт.
-
-### Навигация
-
-Нижняя навигация:
-
-1. **Партии**
-2. **Позиция**
-3. **Импорт**
-4. **Инструменты**
-
-### Экран «Партии»
-
-- список партий;
-- поиск;
-- фильтры: игрок, год/диапазон, турнир, результат;
-- карточка партии: белые, чёрные, событие, дата, результат;
-- открытие партии в отдельном мобильном viewer;
-- виртуализация списка для больших корпусов — позднее в этом этапе.
-
-### Viewer партии
-
-- доска почти во всю ширину телефона;
-- заголовок партии;
-- текущий номер хода;
-- предыдущая/следующая позиция;
-- переход в начало/конец;
-- тап по ходу;
-- свайп влево/вправо для перехода по ходам — после базового viewer;
-- раскрываемая статистика текущей позиции;
-- список совпадений позиции в корпусе.
-
-### Экран «Позиция»
-
-- доска;
-- режим расстановки;
-- ввод/вставка FEN;
-- выбор стороны хода;
-- поиск текущей позиции в корпусе;
-- результаты и продолжения;
-- переход к найденным партиям.
-
-### Экран «Импорт»
-
-- системный выбор `.pdn` файла;
-- поддержка нескольких файлов;
-- прогресс импорта;
-- отчёт: найдено / импортировано / пропущено / ошибки;
-- журнал проблемных партий;
-- без огромного textarea в основном UX;
-- текстовый импорт оставить только как дополнительный режим/инструмент разработчика.
-
-### Экран «Инструменты»
-
-На первом этапе — каталог-заглушка для будущих модулей, чтобы архитектура навигации была готова.
-
-Критерий завершения: на ширине 360–430 px все основные операции выполняются без desktop-layout и горизонтальной прокрутки.
+- tolerant reader обязателен;
+- полноценный Rules Engine обязателен для импорта;
+- большой официальный корпус нельзя держать как гигантский JS array;
+- published corpus должен собираться офлайн;
+- импорт одной проблемной партии не должен останавливать весь файл.
 
 ---
 
-## Этап 2 — корректное ядро правил русских шашек
+# Этап 1 — Core library boundary — В РАБОТЕ
 
-Цель: импорт партии не должен доверять строке хода — каждая позиция должна быть подтверждена правилами.
+Цель: отделить предметное ядро от приложения и подготовить расширяемость.
 
-- [ ] генератор тихих ходов простых;
-- [ ] обязательное взятие;
-- [ ] взятие простой шашкой вперёд и назад;
-- [ ] летающая дамка;
-- [ ] многократные взятия;
-- [ ] запрет повторного взятия уже взятой шашки в одной серии;
-- [ ] корректный порядок снятия побитых шашек;
-- [ ] превращение простой в дамку во время серии взятий;
-- [ ] генерация всех допустимых продолжений серии;
-- [ ] применение конкретного PDN-хода только если он является легальным;
-- [ ] тесты на известные сложные позиции русских шашек.
+Уже сделано:
 
-Критерий завершения: полный набор regression-тестов правил и невозможность создать позицию партии нелегальным ходом.
+- [x] bitboard position model;
+- [x] `sideToMove` в позиции;
+- [x] algebraic square mapping;
+- [x] FEN reader/writer;
+- [x] `CorpusReadApi`;
+- [x] memory adapter для development;
+- [x] `AnalysisTool` contract;
+- [x] `ToolRegistry`;
+- [x] первый tool: Position Statistics;
+- [x] единая классификация результатов `2-0/1-1/0-2` и chess-style variants.
+
+Следующее:
+
+- [ ] выделить domain `Game/Move/Result` отдельно от `PdnGame`;
+- [ ] UI импортирует только public API из `src/engine`;
+- [ ] repository contracts для read/write;
+- [ ] application use-cases поверх repository;
+- [ ] убрать зависимости tools от parser/storage internals.
+
+Критерий: tool можно unit-test-ить без React и без конкретной БД.
 
 ---
 
-## Этап 3 — полноценный PDN 3.0
+# Этап 2 — Rules Engine русских шашек — ТЕКУЩИЙ CORE-ЭТАП
 
-Цель: безопасно обрабатывать исторический корпус и экспортировать его обратно без потери данных.
+Цель: любая позиция, построенная из партии, должна быть следствием легального хода.
 
-- [ ] tolerant parser;
-- [ ] tags/headers;
-- [ ] `GameType 25` для русских шашек;
-- [ ] алгебраическая нотация A0;
-- [ ] комментарии;
-- [ ] NAG/аннотации;
-- [ ] варианты/RAV;
-- [ ] Setup/FEN;
-- [ ] сохранение исходного текста;
+Уже реализовано:
+
+- [x] генерация тихих ходов простых;
+- [x] обязательность взятия;
+- [x] взятие простой вперёд/назад;
+- [x] летающая дамка;
+- [x] многократные взятия;
+- [x] запрет повторного взятия той же шашки;
+- [x] побитые шашки остаются блокерами до окончания серии;
+- [x] превращение во время серии;
+- [x] продолжение после превращения как дамкой;
+- [x] выбор любой легальной серии, без правила максимального взятия;
+- [x] разрешение исторического shortened capture по legal start/end;
+- [x] ambiguous shortened capture не угадывается;
+- [x] regression tests на реальные фрагменты корпуса.
+
+Осталось:
+
+- [ ] расширенный набор rule fixtures;
+- [ ] benchmark generator-а;
+- [ ] corpus replay benchmark на больших выборках;
+- [ ] оптимизация только после профилирования.
+
+Критерий: corpus replay не создаёт нелегальных позиций и выдаёт диагностируемые исключения вместо угадывания.
+
+---
+
+# Этап 3 — Tolerant PDN / AST
+
+Цель: читать исторические данные и уметь сохранить их без потерь.
+
+Текущий transitional reader уже:
+
+- [x] не зависит от `[Event]` как первой строки;
+- [x] принимает `GameType 25` в сокращённой форме;
+- [x] принимает `x` и `:` при чтении;
+- [x] сохраняет исходный source;
+- [x] читает legacy numeric FEN;
+- [x] не удаляет game record при replay error;
+- [x] main line отделяется от comments/RAV для позиционного индекса.
+
+Нужно:
+
+- [ ] lexer;
 - [ ] AST;
-- [ ] диагностические сообщения с номером партии/строки;
-- [ ] сериализация обратно в PDN;
-- [ ] хранение точной последовательности ходов, не только позиций.
+- [ ] arbitrary tag order;
+- [ ] comments;
+- [ ] nested RAV;
+- [ ] NAG;
+- [ ] move strength;
+- [ ] `%` line comments;
+- [ ] setup commands;
+- [ ] source locations line/column;
+- [ ] diagnostics severity/code;
+- [ ] canonical writer;
+- [ ] lossless source retention;
+- [ ] round-trip tests.
 
-Критерий завершения: round-trip тесты PDN и импорт реальной выборки корпуса с отчётом о несовместимых данных.
+Критерий: реальная выборка корпуса проходит parser без потери структурных данных; несовместимые конструкции перечислены в diagnostics.
 
 ---
 
-## Этап 4 — постоянное хранилище и массовый корпус
+# Этап 4 — Corpus Builder и постоянное хранилище
 
-Цель: перейти от массива в памяти к базе, рассчитанной на сотни тысяч/миллионы позиций.
+Этот этап повышен в приоритете после анализа файла ~64 MB.
 
-### Модель
+## 4A. Published corpus builder (Node)
 
 ```text
-positions
-  id
-  white64
-  black64
-  side_to_move
-  hash/index
-
-games
-  id
-  headers
-  result
-  source
-  original_pdn
-
-game_plies
-  game_id
-  ply
-  position_id
-  move_code
-
-transitions
-  position_id
-  move_code
-  next_position_id
-  games
-  white_wins
-  draws
-  black_wins
+source PDN
+ -> tolerant reader
+ -> normalized domain game
+ -> Rules Engine replay
+ -> position deduplication
+ -> transition aggregation
+ -> storage builder
+ -> versioned published corpus
 ```
 
-### Хранилище
+Требования:
+
+- [ ] streaming input;
+- [ ] batch processing;
+- [ ] progress;
+- [ ] per-game diagnostics;
+- [ ] resume/rebuild strategy;
+- [ ] deterministic output;
+- [ ] corpus manifest/version/checksum;
+- [ ] benchmark report.
+
+## 4B. Storage contracts
+
+Основная модель:
+
+```text
+positions(id, white64, black64, side_to_move, hash)
+games(id, metadata, result, source_ref)
+game_plies(game_id, ply, position_id, move_code)
+transitions(position_id, move_code, next_position_id, counters...)
+```
+
+Дополнительно сохраняются source/AST/diagnostics.
+
+## 4C. Adapters
 
 - Android: SQLite;
-- Web: SQLite WASM/OPFS либо IndexedDB-adapter после бенчмарка;
-- опубликованный corpus — read-only;
-- пользовательские партии — отдельная локальная база;
-- миграции схемы;
-- импорт в Web Worker;
-- пакетный import/bulk insert;
-- индексы под поиск позиции и фильтры партий.
+- Web: SQLite WASM/OPFS или IndexedDB после benchmark;
+- development: MemoryCorpus;
+- published corpus: read-only adapter;
+- user library: writable adapter.
 
-Критерий завершения: импорт большой тестовой выборки без зависания UI и мгновенный поиск конкретной позиции после индексации.
+Критерий: `russian2012.pdn` не требуется повторно парсить при запуске приложения.
 
 ---
 
-## Этап 5 — Position Explorer
+# Этап 5 — User Import Pipeline
 
-Цель: сделать поиск по позиции центральным исследовательским инструментом.
+Цель: пользователь добавляет новые партии без серверной инфраструктуры.
 
-- [ ] поиск по FEN;
-- [ ] поиск позиции из открытой партии;
-- [ ] число вхождений;
-- [ ] результаты W/D/L;
-- [ ] процентные показатели;
-- [ ] продолжения и их частота;
-- [ ] статистика каждого продолжения;
-- [ ] игроки / турниры / годы;
-- [ ] фильтрация статистики по периоду, игрокам и уровню;
-- [ ] переход в каждую найденную партию сразу на нужный ply;
-- [ ] транспозиции.
+```text
+file picker
+ -> worker/stream reader
+ -> PDN
+ -> rules
+ -> local write repository
+ -> index update
+ -> structured report
+```
 
----
+- [ ] multiple files;
+- [ ] progress;
+- [ ] cancellation;
+- [ ] duplicate detection;
+- [ ] incremental transaction batches;
+- [ ] background worker;
+- [ ] report: discovered / parsed / replayed / indexed / warning / error;
+- [ ] problem game viewer;
+- [ ] retry after parser/rule update.
 
-## Этап 6 — Opening Explorer и анализ корпуса
-
-- [ ] автоматическое дерево дебютов;
-- [ ] частотность вариантов;
-- [ ] результативность;
-- [ ] популярность по десятилетиям;
-- [ ] новинки/первые появления продолжения;
-- [ ] последовательности ходов;
-- [ ] повторяющиеся шаблоны;
-- [ ] аномалии;
-- [ ] сравнение исторических периодов;
-- [ ] отчёты по игрокам;
-- [ ] сравнение двух игроков;
-- [ ] подготовка против конкретного соперника.
+Критерий: импорт не блокирует UI и одна ошибочная партия не останавливает остальные.
 
 ---
 
-## Этап 7 — поиск комбинаций
+# Этап 6 — Mobile UX / Design System — ПАРАЛЛЕЛЬНЫЙ ТРЕК
 
-Цель: автоматически находить тактические эпизоды в реальных партиях.
+Документ: `docs/design-system.md`.
 
-- [ ] material swing;
-- [ ] переход в дамки;
-- [ ] жертвы;
-- [ ] форсированные серии;
-- [ ] оценочный swing;
-- [ ] ranking кандидатов;
-- [ ] ручное подтверждение/отклонение;
-- [ ] генерация тренировочных задач из корпуса.
+Основные решения:
+
+- одна задача на экран;
+- доска — главный объект viewer;
+- compact app bar;
+- bottom navigation для top-level routes;
+- position analytics в bottom sheet;
+- настоящие SVG icons вместо Unicode glyphs;
+- touch target >= 48 dp;
+- edge-to-edge + safe areas;
+- progressive disclosure;
+- минимум тяжёлых карточек/рамок;
+- обязательные empty/loading/progress/error/partial states;
+- 360/390/430 px regression sizes.
+
+### Экраны MVP
+
+#### Партии
+
+- search;
+- filter chips;
+- list;
+- result/date/event;
+- virtualized/paged source from repository.
+
+#### Game Viewer
+
+- board;
+- move navigation;
+- move list/strip;
+- position insight handle;
+- bottom sheet with statistics/continuations/occurrences.
+
+#### Position
+
+- board editor;
+- side to move;
+- optional FEN input;
+- corpus search;
+- occurrences/statistics.
+
+#### Import
+
+- file picker;
+- progress;
+- report;
+- diagnostics as secondary view.
+
+#### Tools
+
+- generated from ToolRegistry;
+- no hard-coded placeholder tools in production UI.
 
 ---
 
-## Этап 8 — оценка позиции без поиска
+# Этап 7 — Position Explorer
 
-Цель: отдельная быстрая оценка самой позиции, а не поиск лучшего хода.
+Центральный research tool:
 
-### Базовая модель
+- [ ] FEN/current position search;
+- [ ] occurrences;
+- [ ] W/D/L and percentages;
+- [ ] continuations;
+- [ ] continuation W/D/L;
+- [ ] players/events/dates;
+- [ ] filters;
+- [ ] jump to exact ply;
+- [ ] transpositions;
+- [ ] compare time periods.
+
+---
+
+# Этап 8 — Opening / Player / Corpus Analytics
+
+Tools/plugins:
+
+- Opening Explorer;
+- opening tree;
+- frequency;
+- success rate;
+- popularity by decade;
+- novelty/first occurrence;
+- repeated sequences;
+- Player Explorer;
+- compare players;
+- opponent preparation;
+- anomaly detection;
+- historical theory evolution.
+
+Каждый tool работает через `CorpusReadApi`, а не через SQL напрямую.
+
+---
+
+# Этап 9 — Combination Finder
+
+- material swing;
+- sacrifices;
+- promotion sequences;
+- forced tactical sequences;
+- evaluation swing;
+- ranking;
+- manual confirmation;
+- training puzzle generation.
+
+---
+
+# Этап 10 — Position Evaluation
+
+Задача: **оценка позиции без поиска лучшего хода**.
+
+## Classical evaluator
 
 - material;
 - kings;
@@ -271,11 +365,11 @@ transitions
 - tempo;
 - structure;
 - threats;
-- историческая статистика позиции.
+- empirical corpus stats.
 
-### Нейросеть
+## Value network
 
-Вход:
+Input:
 
 ```text
 white men
@@ -285,134 +379,129 @@ black kings
 side to move
 ```
 
-Выход:
+Output:
 
 ```text
 P(win), P(draw), P(loss)
 ```
 
-- [ ] подготовка датасета;
-- [ ] борьба с bias исторических результатов;
-- [ ] train/validation split по партиям и времени;
-- [ ] benchmark против классической оценки;
-- [ ] экспорт ONNX;
-- [ ] локальный inference на Android/Web;
-- [ ] сравнение `history vs neural evaluation`.
+- dataset;
+- leakage-safe train/validation split;
+- bias analysis;
+- ONNX export;
+- local inference;
+- historical vs neural comparison.
 
-AlphaZero/MCTS не является обязательной частью этой функции, поскольку задача — оценка позиции без поиска.
-
----
-
-## Этап 9 — расширяемая система инструментов
-
-```ts
-interface AnalysisTool {
-  id: string;
-  name: string;
-  canAnalyze(context: AnalysisContext): boolean;
-  analyze(context: AnalysisContext): Promise<AnalysisResult>;
-}
-```
-
-Модули:
-
-- Position Statistics;
-- Opening Explorer;
-- Player Explorer;
-- Combination Finder;
-- Anomaly Finder;
-- Novelty Finder;
-- Value Network;
-- Endgame tools.
-
-UI должен получать список инструментов из registry, а не быть жёстко связанным с каждым модулем.
+AlphaZero/MCTS не обязателен, потому что отдельная задача — статическая value evaluation.
 
 ---
 
-## Этап 10 — AI/Agent слой
+# Этап 11 — AI Agent layer
 
-Агент не заменяет детерминированное ядро.
+LLM/agent — только orchestration layer над точными tools.
 
-Его роль — переводить исследовательский запрос пользователя в вызовы точных инструментов корпуса, например:
+Пример:
 
-> Найди необычные продолжения этого дебюта после 1990 года и покажи партии сильнейших игроков.
+> Найди редкие продолжения этого дебюта после 1990 года и сравни их результативность.
 
-Агент вызывает API поиска/статистики/сравнения, затем объясняет результат. Работа основной базы, импорт и правила не зависят от LLM.
+Agent:
 
----
+1. выбирает tools;
+2. формирует query;
+3. получает структурированные результаты;
+4. объясняет их.
 
-## Этап 11 — выпуск Android
-
-- [ ] Android project в репозитории или воспроизводимая генерация;
-- [ ] app id;
-- [ ] иконка/splash;
-- [ ] portrait-first;
-- [ ] системный file picker;
-- [ ] safe areas;
-- [ ] back button;
-- [ ] offline mode;
-- [ ] release signing через защищённый CI;
-- [ ] APK artifact;
-- [ ] AAB при необходимости публикации в магазине;
-- [ ] обновление локальной БД без потери пользовательских данных.
+Parser/rules/storage никогда не зависят от LLM.
 
 ---
 
-## Нефункциональные требования
+# Этап 12 — Android Release
 
-### Производительность
-
-- поиск позиции должен использовать индекс, а не полный проход по партиям;
-- тяжёлый импорт/анализ выполняется вне UI thread;
-- избегать строковых ключей как конечного формата хранения миллионов позиций;
-- UI списка партий виртуализируется при необходимости;
-- вычислительное ядро можно перенести в Rust/WASM только после профилирования.
-
-### Надёжность
-
-- unit tests ядра;
-- fixtures из реальных PDN;
-- regression tests найденных ошибок;
-- CI: test + build;
-- никакой автоматически импортированной партии без отчёта при ошибках правил/PDN.
-
-### Данные
-
-- исходный PDN не теряется;
-- импорт не должен молча исправлять неизвестные конструкции;
-- официальный корпус и пользовательская библиотека разделены;
-- обновление опубликованного корпуса не уничтожает локальные партии.
-
-### UX
-
-- русский интерфейс как основной;
-- никакой внутренней нумерации 1–32 в обычном UI;
-- доска — главный визуальный объект viewer;
-- техническая диагностика вынесена из основных экранов;
-- mobile-first, touch targets не менее ~44 px;
-- тёмная/светлая тема — отдельный поздний этап, не блокирует MVP.
+- Android project/reproducible generation;
+- package id;
+- icon/splash;
+- edge-to-edge;
+- system file picker;
+- back/predictive back;
+- offline mode;
+- signed release APK;
+- AAB при необходимости;
+- safe local DB migration;
+- published corpus update mechanism.
 
 ---
 
-# Ближайший план реализации
+# Нефункциональные требования
 
-## Sprint 1 — Mobile shell
+## Correctness
 
-1. нижняя навигация;
-2. экран списка партий;
-3. отдельный полноэкранный viewer партии;
-4. экран Position;
-5. экран Import без textarea в основном сценарии;
-6. Tools screen;
-7. responsive test на 360/390/430 px;
-8. CI.
+- rules unit tests;
+- parser fixtures;
+- corpus regression fixtures;
+- no silent guessing;
+- source preservation;
+- deterministic builder.
 
-## Sprint 2 — Rules engine
+## Performance
 
-Полный генератор легальных ходов и тесты правил русских шашек.
+- no full scans for position lookup;
+- no huge corpus in React state;
+- no full `File.text()` path for production large corpus import;
+- worker/background processing;
+- paged/virtualized UI;
+- benchmark before Rust/WASM optimization.
 
-## Sprint 3 — PDN + storage
+## Extensibility
 
-Tolerant PDN, локальная постоянная БД, массовый импорт и worker.
+- public API versioning;
+- tools registry;
+- storage adapters;
+- parser adapters;
+- UI does not import internal storage implementation.
 
-После этого приложение готово к загрузке реального большого корпуса и дальнейшей аналитике.
+## UX
+
+- Russian primary UI;
+- no internal 1..32 notation;
+- normal user can browse/search without knowing PDN/FEN;
+- technical diagnostics are secondary;
+- mobile-first.
+
+---
+
+# Ближайшие спринты
+
+## Sprint A — Corpus correctness
+
+1. finish rules regression suite;
+2. replay larger real fixtures;
+3. tolerant reader diagnostics;
+4. result/capture normalization;
+5. corpus compatibility report.
+
+## Sprint B — Library boundary
+
+1. domain Game/Move types;
+2. write repository contract;
+3. use-cases;
+4. migrate UI to `src/engine` public API;
+5. ToolRegistry-driven tools UI.
+
+## Sprint C — Published corpus builder
+
+1. streaming Node reader;
+2. storage prototype;
+3. build first database from `russian2012.pdn`;
+4. benchmark size/speed;
+5. choose production storage backend.
+
+## Sprint D — Modern mobile UX
+
+1. SVG icon set;
+2. compact app bars;
+3. list/filter UX;
+4. viewer bottom sheet;
+5. import progress/report;
+6. responsive regression checks.
+
+После Sprint C у нас должна появиться первая версия, которая работает не на игрушечном массиве, а на настоящем историческом корпусе.
