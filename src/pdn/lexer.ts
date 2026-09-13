@@ -3,7 +3,8 @@ export type PdnToken =
   | { type: 'move-number'; number: number; side: 'white' | 'black'; raw: string; offset: number }
   | { type: 'move'; raw: string; squares: readonly string[]; capture: boolean; offset: number }
   | { type: 'comment'; value: string; raw: string; offset: number }
-  | { type: 'variation-open' | 'variation-close'; raw: string; offset: number }
+  | { type: 'variation-open'; raw: string; offset: number }
+  | { type: 'variation-close'; raw: string; offset: number }
   | { type: 'nag'; value: number; raw: string; offset: number }
   | { type: 'annotation'; value: string; raw: string; offset: number }
   | { type: 'result'; value: string; raw: string; offset: number }
@@ -69,12 +70,14 @@ export function lexPdn(source: string): PdnToken[] {
       continue;
     }
 
-    if (rest[0] === '(' || rest[0] === ')') {
-      tokens.push({
-        type: rest[0] === '(' ? 'variation-open' : 'variation-close',
-        raw: rest[0],
-        offset,
-      });
+    if (rest[0] === '(') {
+      tokens.push({ type: 'variation-open', raw: '(', offset });
+      offset += 1;
+      continue;
+    }
+
+    if (rest[0] === ')') {
+      tokens.push({ type: 'variation-close', raw: ')', offset });
       offset += 1;
       continue;
     }
