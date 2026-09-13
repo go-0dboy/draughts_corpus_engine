@@ -1,11 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './MobileApp';
+import App from './App';
 import { applyPreferences } from './application/preferences';
 import './styles.css';
 import './theme.css';
 import './board.css';
 import './mobile.css';
+import './app-v2.css';
 
 applyPreferences();
 
