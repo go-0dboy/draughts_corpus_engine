@@ -1,4 +1,4 @@
-import { rowColToSquare } from '../core/board';
+import { rowColToSquare, squareToAlgebraic } from '../core/board';
 import { pieceAt } from '../core/position';
 import type { Piece, Position } from '../core/types';
 
@@ -11,7 +11,7 @@ const SYMBOL: Record<Piece, string> = {
 
 interface BoardProps {
   position: Position;
-  onSquareClick: (square: number) => void;
+  onSquareClick?: (square: number) => void;
 }
 
 export function Board({ position, onSquareClick }: BoardProps) {
@@ -22,22 +22,22 @@ export function Board({ position, onSquareClick }: BoardProps) {
         const col = index % 8;
         const square = rowColToSquare(row, col);
         const piece = square === null ? null : pieceAt(position, square);
+        const label = square === null ? '' : squareToAlgebraic(square);
         return (
           <button
             type="button"
             role="gridcell"
             className={`cell ${(row + col) % 2 === 0 ? 'light' : 'dark'}`}
             key={`${row}-${col}`}
-            disabled={square === null}
-            aria-label={square === null ? 'Светлое поле' : `Поле ${square}${piece ? `, ${piece}` : ''}`}
-            onClick={() => square !== null && onSquareClick(square)}
+            disabled={square === null || !onSquareClick}
+            aria-label={square === null ? 'Светлое поле' : `Поле ${label}${piece ? `, ${piece}` : ''}`}
+            onClick={() => square !== null && onSquareClick?.(square)}
           >
             {piece && <span className={`piece ${piece}`}>{SYMBOL[piece]}</span>}
-            {square !== null && <span className="square-number">{square}</span>}
+            {square !== null && <span className="square-number">{label}</span>}
           </button>
         );
       })}
     </div>
   );
 }
-
