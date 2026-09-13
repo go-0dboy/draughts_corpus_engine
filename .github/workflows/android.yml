@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - uses: actions/setup-java@v4
         with:
@@ -29,4 +29,3 @@ jobs:
         with:
           name: draughts-corpus-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
-
