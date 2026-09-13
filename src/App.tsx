@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
-import { Board } from './components/Board';
+import { Board, type BoardOrientation } from './components/Board';
 import { BottomNav, type AppTab } from './components/BottomNav';
+import { Icon, type IconName } from './components/Icon';
 import { CorpusIndex } from './corpus';
 import { parsePdn, type PdnGame } from './corpus/pdn';
 import { parseFen, toFen } from './core/fen';
 import { INITIAL_POSITION } from './core/position';
+import { parseRussianMove } from './core/russianMove';
 import type { Position } from './core/types';
 
 const SAMPLE_PDN = `[Event "Учебная партия"]
@@ -32,13 +34,28 @@ function App() {
   const [positionSearch, setPositionSearch] = useState<Position>({ ...INITIAL_POSITION });
   const [fenInput, setFenInput] = useState(toFen(INITIAL_POSITION));
   const [positionError, setPositionError] = useState('');
+  const [boardOrientation, setBoardOrientation] = useState<BoardOrientation>('white');
+  const [positionSheetOpen, setPositionSheetOpen] = useState(false);
 
   const corpus = useMemo(() => new CorpusIndex(games), [games]);
   const selectedGame = games.find((game) => game.id === selectedGameId) ?? null;
-  const safePly = selectedGame ? Math.min(ply, selectedGame.positions.length - 1) : 0;
+  const maxViewPly = selectedGame ? Math.max(0, selectedGame.positions.length - 1) : 0;
+  const safePly = Math.min(ply, maxViewPly);
   const currentPosition = selectedGame?.positions[safePly] ?? null;
   const currentReport = currentPosition ? corpus.report(currentPosition) : null;
   const positionReport = corpus.report(positionSearch);
+
+  const highlightedSquares = useMemo(() => {
+    if (!selectedGame || safePly === 0) return [];
+    const notation = selectedGame.moves[safePly - 1];
+    if (!notation) return [];
+    try {
+      const move = parseRussianMove(notation);
+      return [move.path[0], move.path[move.path.length - 1]];
+    } catch {
+      return [];
+    }
+  }, [selectedGame, safePly]);
 
   const filteredGames = useMemo(() => {
     const query = gameQuery.trim().toLocaleLowerCase('ru');
@@ -57,13 +74,16 @@ function App() {
   }, [games, gameQuery]);
 
   const switchTab = (tab: AppTab) => {
+    setPositionSheetOpen(false);
     setLastTab(tab);
     setView(tab);
   };
 
   const openGame = (game: PdnGame, targetPly = 0) => {
+    const availablePly = Math.max(0, game.positions.length - 1);
     setSelectedGameId(game.id);
-    setPly(Math.max(0, Math.min(targetPly, game.moves.length)));
+    setPly(Math.max(0, Math.min(targetPly, availablePly)));
+    setPositionSheetOpen(false);
     setView('viewer');
   };
 
@@ -105,39 +125,69 @@ function App() {
     setPositionSearch({ ...position });
     setFenInput(toFen(position));
     setPositionError('');
+    setPositionSheetOpen(false);
     switchTab('position');
   };
 
+  const flipBoard = () => {
+    setBoardOrientation((value) => value === 'white' ? 'black' : 'white');
+  };
+
   if (view === 'viewer' && selectedGame && currentPosition && currentReport) {
+    const currentMove = safePly > 0 ? selectedGame.moves[safePly - 1] : 'Стартовая позиция';
+    const isReplayPartial = selectedGame.replay.status === 'partial';
+
     return (
       <div className="mobile-app viewer-screen">
         <header className="app-bar viewer-bar">
-          <button className="icon-button" type="button" aria-label="Назад" onClick={() => setView(lastTab)}>‹</button>
+          <button className="icon-button ghost-button" type="button" aria-label="Назад" onClick={() => setView(lastTab)}>
+            <Icon name="back" />
+          </button>
           <div className="app-bar-title">
             <strong>{selectedGame.headers.White ?? '—'} — {selectedGame.headers.Black ?? '—'}</strong>
             <span>{[selectedGame.headers.Event, selectedGame.headers.Date].filter(Boolean).join(' · ') || 'Партия'}</span>
           </div>
-          <span className="game-result">{selectedGame.result}</span>
+          <div className="app-bar-actions">
+            <span className="result-chip">{selectedGame.result}</span>
+            <button className="icon-button ghost-button" type="button" aria-label="Перевернуть доску" onClick={flipBoard}>
+              <Icon name="flip" />
+            </button>
+          </div>
         </header>
 
         <main className="viewer-content">
+          {isReplayPartial && (
+            <div className="replay-notice" role="status">
+              Позиции восстановлены до {maxViewPly}-го полухода из {selectedGame.moves.length}.
+            </div>
+          )}
+
           <section className="board-wrap">
-            <Board position={currentPosition} />
+            <Board
+              position={currentPosition}
+              orientation={boardOrientation}
+              highlightSquares={highlightedSquares}
+            />
+          </section>
+
+          <section className="current-move-line" aria-live="polite">
+            <span>{safePly === 0 ? 'Начало партии' : `Полуход ${safePly}`}</span>
+            <strong>{currentMove}</strong>
           </section>
 
           <section className="move-controller" aria-label="Навигация по партии">
-            <button type="button" onClick={() => setPly(0)} disabled={safePly === 0}>|‹</button>
-            <button type="button" onClick={() => setPly(Math.max(0, safePly - 1))} disabled={safePly === 0}>‹</button>
+            <button type="button" aria-label="В начало" onClick={() => setPly(0)} disabled={safePly === 0}><Icon name="first" /></button>
+            <button type="button" aria-label="Предыдущий ход" onClick={() => setPly(Math.max(0, safePly - 1))} disabled={safePly === 0}><Icon name="previous" /></button>
             <div>
               <strong>{safePly}</strong>
-              <span>из {selectedGame.moves.length}</span>
+              <span>из {maxViewPly}</span>
             </div>
-            <button type="button" onClick={() => setPly(Math.min(selectedGame.moves.length, safePly + 1))} disabled={safePly >= selectedGame.moves.length}>›</button>
-            <button type="button" onClick={() => setPly(selectedGame.moves.length)} disabled={safePly >= selectedGame.moves.length}>›|</button>
+            <button type="button" aria-label="Следующий ход" onClick={() => setPly(Math.min(maxViewPly, safePly + 1))} disabled={safePly >= maxViewPly}><Icon name="next" /></button>
+            <button type="button" aria-label="В конец" onClick={() => setPly(maxViewPly)} disabled={safePly >= maxViewPly}><Icon name="last" /></button>
           </section>
 
           <section className="move-strip" aria-label="Ходы партии">
-            {selectedGame.moves.map((move, index) => (
+            {selectedGame.moves.slice(0, maxViewPly).map((move, index) => (
               <button
                 type="button"
                 key={`${move}-${index}`}
@@ -149,18 +199,41 @@ function App() {
             ))}
           </section>
 
-          <section className="mobile-card position-summary-card">
-            <div className="card-heading-row">
-              <div>
-                <span className="section-kicker">Текущая позиция</span>
-                <h2>Встречалась {currentReport.occurrences.length} раз</h2>
-              </div>
-              <button type="button" className="text-button" onClick={() => analyzePosition(currentPosition)}>Подробнее</button>
+          <button
+            type="button"
+            className="position-insight"
+            onClick={() => setPositionSheetOpen(true)}
+            aria-haspopup="dialog"
+          >
+            <div>
+              <span>Эта позиция</span>
+              <strong>{currentReport.occurrences.length} {pluralGames(currentReport.occurrences.length)}</strong>
             </div>
-            <ResultStats report={currentReport} />
-            <ContinuationList report={currentReport} limit={4} />
-          </section>
+            <Icon name="up" size={21} />
+          </button>
         </main>
+
+        {positionSheetOpen && (
+          <>
+            <button className="sheet-backdrop" type="button" aria-label="Закрыть статистику" onClick={() => setPositionSheetOpen(false)} />
+            <section className="bottom-sheet" role="dialog" aria-modal="true" aria-label="Статистика текущей позиции">
+              <div className="sheet-handle" aria-hidden="true" />
+              <div className="sheet-heading">
+                <div>
+                  <span className="section-kicker">Текущая позиция</span>
+                  <h2>{currentReport.occurrences.length} вхождений</h2>
+                </div>
+                <span className="side-chip">Ход {currentPosition.sideToMove === 'W' ? 'белых' : 'чёрных'}</span>
+              </div>
+              <ResultStats report={currentReport} />
+              <ContinuationList report={currentReport} limit={6} />
+              <div className="sheet-actions">
+                <button type="button" className="primary-button full-width" onClick={() => analyzePosition(currentPosition)}>Открыть Position Explorer</button>
+                <button type="button" className="secondary-button full-width" onClick={() => setPositionSheetOpen(false)}>Закрыть</button>
+              </div>
+            </section>
+          </>
+        )}
       </div>
     );
   }
@@ -175,7 +248,7 @@ function App() {
             <ScreenHeader title="Партии" subtitle={`${games.length} партий · ${corpus.uniquePositionCount()} позиций`} />
             <section className="screen-section">
               <label className="search-box">
-                <span aria-hidden="true">⌕</span>
+                <Icon name="search" size={21} />
                 <input
                   type="search"
                   value={gameQuery}
@@ -202,7 +275,7 @@ function App() {
                     <div className="game-card-main">
                       <strong>{game.headers.White ?? '—'} — {game.headers.Black ?? '—'}</strong>
                       <span>{[game.headers.Event, game.headers.Site].filter(Boolean).join(' · ') || 'Без названия'}</span>
-                      <small>{game.headers.Date ?? 'Дата неизвестна'} · {game.moves.length} полуходов</small>
+                      <small>{game.headers.Date || 'Дата неизвестна'} · {game.moves.length} полуходов</small>
                     </div>
                     <span className="game-card-result">{game.result}</span>
                   </button>
@@ -216,9 +289,15 @@ function App() {
           <>
             <ScreenHeader title="Позиция" subtitle="Поиск по всему корпусу" />
             <section className="position-board-section">
-              <Board position={positionSearch} />
+              <Board position={positionSearch} orientation={boardOrientation} />
+              <div className="board-toolbar">
+                <span className="side-chip">Ход {positionSearch.sideToMove === 'W' ? 'белых' : 'чёрных'}</span>
+                <button className="compact-action" type="button" onClick={flipBoard}><Icon name="flip" size={19} /> Перевернуть</button>
+              </div>
             </section>
-            <section className="mobile-card fen-card">
+
+            <details className="mobile-card fen-card">
+              <summary>Вставить FEN</summary>
               <label htmlFor="position-fen">FEN позиции</label>
               <textarea
                 id="position-fen"
@@ -228,18 +307,20 @@ function App() {
                 spellCheck={false}
               />
               {positionError && <p className="inline-error">{positionError}</p>}
-              <button type="button" className="primary-button full-width" onClick={applyFen}>Найти в корпусе</button>
-            </section>
-            <section className="mobile-card">
+              <button type="button" className="primary-button full-width" onClick={applyFen}>Применить FEN</button>
+            </details>
+
+            <section className="mobile-card explorer-summary">
               <div className="card-heading-row">
                 <div>
-                  <span className="section-kicker">Результат поиска</span>
+                  <span className="section-kicker">Position Explorer</span>
                   <h2>{positionReport.occurrences.length} вхождений</h2>
                 </div>
               </div>
               <ResultStats report={positionReport} />
               <ContinuationList report={positionReport} />
             </section>
+
             {positionReport.occurrences.length > 0 && (
               <section className="mobile-card">
                 <h2>Партии с этой позицией</h2>
@@ -266,11 +347,11 @@ function App() {
 
         {view === 'import' && (
           <>
-            <ScreenHeader title="Импорт" subtitle="Добавление партий в локальный корпус" />
+            <ScreenHeader title="Импорт" subtitle="Добавление партий в локальную библиотеку" />
             <section className="import-hero mobile-card">
-              <div className="import-icon" aria-hidden="true">⇩</div>
-              <h2>Открыть PDN-файл</h2>
-              <p>Выбери файл с партиями в русские шашки. Основная пользовательская нотация — буквенная.</p>
+              <div className="import-icon" aria-hidden="true"><Icon name="upload" size={28} /></div>
+              <h2>Добавить партии</h2>
+              <p>Выбери PDN-файл. Исторические варианты записи будут нормализованы ядром, исходный текст при этом сохраняется.</p>
               <label className="primary-button file-picker full-width">
                 Выбрать .pdn
                 <input type="file" accept=".pdn,.txt,text/plain" onChange={(event) => void loadFile(event.target.files?.[0])} />
@@ -278,7 +359,7 @@ function App() {
             </section>
 
             <section className="mobile-card">
-              <h2>Состояние корпуса</h2>
+              <h2>Локальная библиотека</h2>
               <div className="metric-grid">
                 <div><strong>{games.length}</strong><span>партий</span></div>
                 <div><strong>{corpus.uniquePositionCount()}</strong><span>позиций</span></div>
@@ -291,7 +372,7 @@ function App() {
             </section>
 
             <details className="mobile-card developer-import">
-              <summary>Текстовый импорт / диагностика</summary>
+              <summary>Диагностика и текстовый импорт</summary>
               <textarea value={pdnText} onChange={(event) => setPdnText(event.target.value)} rows={8} spellCheck={false} />
               <div className="stacked-actions">
                 <button type="button" className="primary-button" onClick={() => importText(pdnText)}>Импортировать текст</button>
@@ -303,12 +384,12 @@ function App() {
 
         {view === 'tools' && (
           <>
-            <ScreenHeader title="Инструменты" subtitle="Аналитика корпуса" />
+            <ScreenHeader title="Инструменты" subtitle="Расширения аналитического ядра" />
             <section className="tool-grid">
-              <ToolCard icon="⌘" title="Дебюты" text="Дерево вариантов, частота и результативность." status="Планируется" />
-              <ToolCard icon="✦" title="Комбинации" text="Поиск тактических эпизодов и жертв в реальных партиях." status="Планируется" />
-              <ToolCard icon="≈" title="Оценка позиции" text="Классическая и нейросетевая оценка без поиска продолжения." status="Планируется" />
-              <ToolCard icon="◎" title="Игроки" text="Репертуар, статистика, сравнение и подготовка к сопернику." status="Планируется" />
+              <ToolCard icon="openings" title="Дебюты" text="Дерево вариантов, частота и результативность." status="Планируется" />
+              <ToolCard icon="tactics" title="Комбинации" text="Поиск тактических эпизодов и жертв в реальных партиях." status="Планируется" />
+              <ToolCard icon="evaluation" title="Оценка позиции" text="Классическая и нейросетевая оценка без поиска продолжения." status="Планируется" />
+              <ToolCard icon="players" title="Игроки" text="Репертуар, статистика, сравнение и подготовка к сопернику." status="Планируется" />
             </section>
           </>
         )}
@@ -332,7 +413,7 @@ function ScreenHeader({ title, subtitle }: ScreenHeaderProps) {
         <h1>{title}</h1>
         <p>{subtitle}</p>
       </div>
-      <span className="app-mark">DC</span>
+      <span className="app-mark" aria-hidden="true">DC</span>
     </header>
   );
 }
@@ -347,7 +428,7 @@ interface EmptyStateProps {
 function EmptyState({ title, text, action, onAction }: EmptyStateProps) {
   return (
     <section className="empty-mobile">
-      <div className="empty-symbol" aria-hidden="true">◈</div>
+      <div className="empty-symbol" aria-hidden="true"><Icon name="position" size={28} /></div>
       <h2>{title}</h2>
       <p>{text}</p>
       {action && onAction && <button type="button" className="primary-button" onClick={onAction}>{action}</button>}
@@ -384,7 +465,7 @@ function ContinuationList({ report, limit }: { report: ReturnType<CorpusIndex['r
 }
 
 interface ToolCardProps {
-  icon: string;
+  icon: IconName;
   title: string;
   text: string;
   status: string;
@@ -393,12 +474,22 @@ interface ToolCardProps {
 function ToolCard({ icon, title, text, status }: ToolCardProps) {
   return (
     <article className="tool-card mobile-card">
-      <div className="tool-icon" aria-hidden="true">{icon}</div>
-      <h2>{title}</h2>
-      <p>{text}</p>
-      <span>{status}</span>
+      <div className="tool-icon" aria-hidden="true"><Icon name={icon} size={22} /></div>
+      <div className="tool-copy">
+        <h2>{title}</h2>
+        <p>{text}</p>
+        <span>{status}</span>
+      </div>
     </article>
   );
+}
+
+function pluralGames(value: number): string {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'партия';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'партии';
+  return 'партий';
 }
 
 export default App;
