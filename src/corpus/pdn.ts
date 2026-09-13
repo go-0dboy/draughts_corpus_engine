@@ -47,7 +47,7 @@ export function parsePdn(text: string): PdnImportResult {
   for (const chunk of iterateGameSources(text)) {
     sequence += 1;
     try {
-      games.push(parseGame(chunk, sequence));
+      games.push(parsePdnGameSource(chunk, sequence));
     } catch (error) {
       errors.push(`Партия ${sequence}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -56,7 +56,8 @@ export function parsePdn(text: string): PdnImportResult {
   return { games, errors };
 }
 
-function parseGame(source: string, sequence: number): PdnGame {
+/** Parse one already separated PDN game. Large-corpus workers use this directly. */
+export function parsePdnGameSource(source: string, sequence = 1): PdnGame {
   const syntax = parsePdnSyntax(source);
   const headers = tagsToRecord(syntax.tags);
   validateRussianGameType(headers);
@@ -101,9 +102,6 @@ function parseGame(source: string, sequence: number): PdnGame {
 
   if (moves.length === 0) warnings.push('В основной линии не найдено ходов в буквенной нотации.');
   if (unknownFragments.length > 0 && replay.status === 'complete') {
-    // Missing OCR text can represent a move that the syntax layer could not
-    // recognise. Do not index such a line as trustworthy even if the remaining
-    // visible moves happen to replay legally.
     replay = {
       status: 'partial',
       appliedMoves: Math.min(replay.appliedMoves, moves.length),
@@ -160,9 +158,8 @@ const TAG_LINE = /^\s*\[[A-Za-z0-9_]+\s+"(?:\\.|[^"])*"\]\s*$/;
  * tag such as Event. The supplied historical corpus starts each game with
  * White/Black and places Event later, which is valid input for a tolerant reader.
  *
- * This remains an application adapter. The published-corpus builder will use a
- * streaming source so very large files never have to be materialized on the UI
- * thread.
+ * The generator yields one game at a time so callers do not have to retain the
+ * parsed corpus in memory. File decoding itself is moved to a worker by the UI.
  */
 export function* iterateGameSources(text: string): Generator<string> {
   const normalized = text.replace(/\r\n?/g, '\n').trim();
