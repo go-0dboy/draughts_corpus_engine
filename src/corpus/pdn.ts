@@ -2,6 +2,7 @@ import { parseFen } from '../core/fen';
 import { INITIAL_POSITION } from '../core/position';
 import { applyRussianMove, parseRussianMove } from '../core/russianMove';
 import type { Position } from '../core/types';
+import { parsePdnSyntax, tagsToRecord } from '../pdn/parser';
 
 export type ReplayStatus = 'complete' | 'partial' | 'not-replayed';
 
@@ -15,7 +16,7 @@ export interface PdnGame {
   id: string;
   headers: Record<string, string>;
   result: string;
-  /** Source move notation without annotations. Capture separator is preserved. */
+  /** Source main-line notation. Full comments/variations stay available in source/AST pipeline. */
   moves: string[];
   /** Positions that the current rules/replay layer could reconstruct safely. */
   positions: Position[];
@@ -30,9 +31,13 @@ export interface PdnImportResult {
 }
 
 /**
- * Tolerant main-line reader used by the application while the full PDN AST
- * parser is being built. It deliberately separates parsing a game record from
- * replaying its moves: a replay problem must not make the whole game disappear.
+ * Transitional corpus adapter.
+ *
+ * Syntax is now read by the rules-independent PDN lexer/parser. This adapter
+ * deliberately projects only the top-level/main-line moves into the old PdnGame
+ * shape while the semantic GameTree resolver is being completed. Comments,
+ * NAGs, annotations and nested variations are no longer destroyed by parsing;
+ * they remain representable in the syntax tree and original source.
  */
 export function parsePdn(text: string): PdnImportResult {
   const games: PdnGame[] = [];
@@ -52,34 +57,29 @@ export function parsePdn(text: string): PdnImportResult {
 }
 
 function parseGame(source: string, sequence: number): PdnGame {
-  const headers: Record<string, string> = {};
-  for (const match of source.matchAll(/^\s*\[([A-Za-z0-9_]+)\s+"((?:\\.|[^"])*)"\]\s*$/gm)) {
-    headers[match[1]] = match[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-  }
-
+  const syntax = parsePdnSyntax(source);
+  const headers = tagsToRecord(syntax.tags);
   validateRussianGameType(headers);
 
-  const movetext = source.replace(/^\s*\[[^\n]*\]\s*$/gm, ' ');
-  const mainLine = stripCommentsAndVariations(movetext)
-    .replace(/\$\d+/g, ' ')
-    .replace(/\b\d+\.(?:\.\.)?/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const mainLineElements = syntax.sequence.elements.filter((element) => element.type !== 'variation');
+  const moves = mainLineElements
+    .filter((element) => element.type === 'move')
+    .map((element) => element.raw.replace(/\s+/g, '').replace(/×/g, 'x'));
 
-  const rawTokens = mainLine.split(' ').filter(Boolean);
-  const resultToken = rawTokens.find((token) => /^(1-0|0-1|1\/2-1\/2|2-0|0-2|1-1|0-0|\*)$/.test(token));
-  const result = headers.Result ?? resultToken ?? '*';
-  const moves = rawTokens
-    .filter((token) => /^[a-h][1-8](?:[-x:][a-h][1-8])+(?:[!?]+)?$/i.test(token))
-    .map((move) => move.replace(/[!?]+$/g, ''));
+  const result = headers.Result ?? syntax.result ?? '*';
 
-  if (moves.length === 0 && rawTokens.some((token) => /^\d{1,2}(?:[-x:]\d{1,2})+/i.test(token))) {
+  if (moves.length === 0 && containsNumericMoveNotation(source)) {
     throw new Error('обнаружена цифровая нотация ходов. Для корпуса русских шашек ожидается буквенная нотация a1-h8.');
   }
 
   let position = startingPosition(headers);
   const positions: Position[] = [{ ...position }];
-  const warnings: string[] = [];
+  const warnings: string[] = syntax.warnings.map((warning) => warning.message);
+  const unknownFragments = collectTopLevelUnknowns(mainLineElements);
+  if (unknownFragments.length > 0) {
+    warnings.push(`Неопознанные фрагменты основной линии: ${unknownFragments.slice(0, 6).join(', ')}${unknownFragments.length > 6 ? '…' : ''}`);
+  }
+
   let replay: PdnReplayInfo = {
     status: moves.length === 0 ? 'not-replayed' : 'complete',
     appliedMoves: 0,
@@ -100,6 +100,16 @@ function parseGame(source: string, sequence: number): PdnGame {
   }
 
   if (moves.length === 0) warnings.push('В основной линии не найдено ходов в буквенной нотации.');
+  if (unknownFragments.length > 0 && replay.status === 'complete') {
+    // Missing OCR text can represent a move that the syntax layer could not
+    // recognise. Do not index such a line as trustworthy even if the remaining
+    // visible moves happen to replay legally.
+    replay = {
+      status: 'partial',
+      appliedMoves: Math.min(replay.appliedMoves, moves.length),
+      error: 'Основная линия содержит неопознанные фрагменты.',
+    };
+  }
 
   return {
     id: gameId(headers, sequence),
@@ -111,6 +121,17 @@ function parseGame(source: string, sequence: number): PdnGame {
     warnings,
     replay,
   };
+}
+
+function collectTopLevelUnknowns(elements: ReturnType<typeof parsePdnSyntax>['sequence']['elements']): string[] {
+  return elements
+    .filter((element) => element.type === 'unknown')
+    .map((element) => element.raw);
+}
+
+function containsNumericMoveNotation(source: string): boolean {
+  const movetext = source.replace(/^\s*\[[^\n]*\]\s*$/gm, ' ');
+  return /(?:^|\s)\d{1,2}(?:\s*[-x:×]\s*\d{1,2})+(?=\s|$)/i.test(movetext);
 }
 
 function validateRussianGameType(headers: Record<string, string>): void {
@@ -132,16 +153,6 @@ function gameId(headers: Record<string, string>, sequence: number): string {
   return parts.length ? `${parts.join('|')}|${sequence}` : `game-${sequence}`;
 }
 
-function stripCommentsAndVariations(value: string): string {
-  let text = value.replace(/\{[^}]*\}/gs, ' ').replace(/;[^\n\r]*/g, ' ');
-  let previous = '';
-  while (previous !== text) {
-    previous = text;
-    text = text.replace(/\([^()]*\)/g, ' ');
-  }
-  return text;
-}
-
 const TAG_LINE = /^\s*\[[A-Za-z0-9_]+\s+"(?:\\.|[^"])*"\]\s*$/;
 
 /**
@@ -149,9 +160,9 @@ const TAG_LINE = /^\s*\[[A-Za-z0-9_]+\s+"(?:\\.|[^"])*"\]\s*$/;
  * tag such as Event. The supplied historical corpus starts each game with
  * White/Black and places Event later, which is valid input for a tolerant reader.
  *
- * This is still a transitional reader. The final PDN module will use a lexer/AST
- * and a streaming source so very large files do not have to be materialized as
- * one string on the UI thread.
+ * This remains an application adapter. The published-corpus builder will use a
+ * streaming source so very large files never have to be materialized on the UI
+ * thread.
  */
 export function* iterateGameSources(text: string): Generator<string> {
   const normalized = text.replace(/\r\n?/g, '\n').trim();
