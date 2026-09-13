@@ -40,6 +40,8 @@ function parseGame(source: string, sequence: number): PdnGame {
     headers[match[1]] = match[2].replace(/\\"/g, '"').replace(/\\\\/g, '\\');
   }
 
+  validateRussianGameType(headers);
+
   const movetext = source.replace(/^\s*\[[^\n]*\]\s*$/gm, ' ');
   const mainLine = stripCommentsAndVariations(movetext)
     .replace(/\$\d+/g, ' ')
@@ -48,9 +50,13 @@ function parseGame(source: string, sequence: number): PdnGame {
     .trim();
 
   const rawTokens = mainLine.split(' ').filter(Boolean);
-  const resultToken = rawTokens.find((token) => /^(1-0|0-1|1\/2-1\/2|\*)$/.test(token));
+  const resultToken = rawTokens.find((token) => /^(1-0|0-1|1\/2-1\/2|2-0|0-2|1-1|0-0|\*)$/.test(token));
   const result = headers.Result ?? resultToken ?? '*';
   const moves = rawTokens.filter((token) => /^[a-h][1-8](?:[-:][a-h][1-8])+(?:[!?]+)?$/i.test(token));
+
+  if (moves.length === 0 && rawTokens.some((token) => /^\d{1,2}[-x:]\d{1,2}/i.test(token))) {
+    throw new Error('обнаружена цифровая нотация ходов. Для корпуса русских шашек ожидается буквенная нотация a1-h8.');
+  }
 
   let position = startingPosition(headers);
   const positions: Position[] = [{ ...position }];
@@ -76,6 +82,15 @@ function parseGame(source: string, sequence: number): PdnGame {
     source,
     warnings,
   };
+}
+
+function validateRussianGameType(headers: Record<string, string>): void {
+  const value = headers.GameType?.trim();
+  if (!value) return;
+  const typeNumber = value.split(',')[0]?.trim();
+  if (typeNumber !== '25') {
+    throw new Error(`GameType ${typeNumber || value} не является русскими шашками. Ожидается GameType 25.`);
+  }
 }
 
 function startingPosition(headers: Record<string, string>): Position {
