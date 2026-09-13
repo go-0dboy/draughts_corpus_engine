@@ -5,7 +5,7 @@ import type { Position } from './types';
 export interface RussianMove {
   /** Canonical application notation. Captures are normalized to ':' internally. */
   notation: string;
-  /** Original notation after trimming annotations. */
+  /** Compact source notation after trimming annotations and normalizing × to x. */
   sourceNotation: string;
   path: number[];
   isCapture: boolean;
@@ -15,11 +15,16 @@ export interface RussianMove {
  * Reads Russian draughts move notation.
  *
  * Strict PDN 3.0 uses ':' for GameType 25 captures, while historical corpora
- * commonly contain 'x'. The reader accepts both; the domain model normalizes
- * captures to ':' without losing sourceNotation.
+ * commonly contain `x` and sometimes the typographic multiplication sign `×`.
+ * Whitespace around separators is also tolerated by the reader. The domain
+ * model normalizes captures to ':' without losing the original PDN in the AST.
  */
 export function parseRussianMove(raw: string): RussianMove {
-  const sourceNotation = raw.trim().replace(/[!?]+$/g, '');
+  const sourceNotation = raw
+    .trim()
+    .replace(/[!?]+$/g, '')
+    .replace(/\s+/g, '')
+    .replace(/×/g, 'x');
   const hasMove = sourceNotation.includes('-');
   const hasCapture = /[x:]/i.test(sourceNotation);
   if (hasMove === hasCapture) throw new Error(`Некорректная запись хода: ${raw}`);
