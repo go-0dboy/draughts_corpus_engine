@@ -5,10 +5,9 @@ import { getCorpusStats, storeGamesBatch } from '../storage/corpusDb';
 
 const BATCH_SIZE = 100;
 
-interface ImportRequest {
-  type: 'import';
-  text: string;
-}
+type ImportRequest =
+  | { type: 'import-text'; text: string }
+  | { type: 'import-file'; file: File };
 
 export type ImportWorkerMessage =
   | { type: 'progress'; parsed: number; imported: number; skipped: number; errors: number; lastError?: string }
@@ -16,8 +15,12 @@ export type ImportWorkerMessage =
   | { type: 'fatal'; message: string };
 
 self.onmessage = (event: MessageEvent<ImportRequest>) => {
-  if (event.data.type !== 'import') return;
-  void importText(event.data.text);
+  const request = event.data;
+  if (request.type === 'import-text') {
+    void importText(request.text);
+  } else if (request.type === 'import-file') {
+    void request.file.text().then(importText).catch(reportFatal);
+  }
 };
 
 async function importText(text: string): Promise<void> {
@@ -43,7 +46,6 @@ async function importText(text: string): Promise<void> {
         skipped += result.skippedGames;
         batch = [];
         postProgress();
-        // Yield so IndexedDB events and UI progress messages are delivered promptly.
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
     }
@@ -65,15 +67,19 @@ async function importText(text: string): Promise<void> {
       positions: stats.positions,
     } satisfies ImportWorkerMessage);
   } catch (error) {
-    postMessage({
-      type: 'fatal',
-      message: error instanceof Error ? error.message : String(error),
-    } satisfies ImportWorkerMessage);
+    reportFatal(error);
   }
 
   function postProgress(lastError?: string): void {
     postMessage({ type: 'progress', parsed, imported, skipped, errors, lastError } satisfies ImportWorkerMessage);
   }
+}
+
+function reportFatal(error: unknown): void {
+  postMessage({
+    type: 'fatal',
+    message: error instanceof Error ? error.message : String(error),
+  } satisfies ImportWorkerMessage);
 }
 
 export {};
