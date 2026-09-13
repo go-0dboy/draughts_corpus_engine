@@ -305,6 +305,7 @@ export async function storeGamesBatch(games: readonly PdnGame[]): Promise<StoreB
     const occurrences: StoredOccurrence[] = [];
 
     for (const item of fresh) {
+      const trustworthy = item.game.replay.status === 'complete';
       item.game.positions.forEach((position, ply) => {
         const key = item.stored.positionKeys[ply];
         const outcome = classifyResult(item.game.result);
@@ -316,11 +317,18 @@ export async function storeGamesBatch(games: readonly PdnGame[]): Promise<StoreB
           draws: 0,
           blackWins: 0,
         };
-        delta.occurrences += 1;
-        if (outcome === 'white-win') delta.whiteWins += 1;
-        else if (outcome === 'black-win') delta.blackWins += 1;
-        else if (outcome === 'draw') delta.draws += 1;
+
+        // Every safely reconstructed position belongs to the dictionary so the
+        // game viewer can use it. Only complete replays contribute statistics.
+        if (trustworthy) {
+          delta.occurrences += 1;
+          if (outcome === 'white-win') delta.whiteWins += 1;
+          else if (outcome === 'black-win') delta.blackWins += 1;
+          else if (outcome === 'draw') delta.draws += 1;
+        }
         positionDeltas.set(key, delta);
+
+        if (!trustworthy) return;
 
         const moveAfter = item.game.moves[ply] ?? null;
         occurrences.push({ positionKey: key, gameId: item.stored.id, ply, moveAfter, result: item.game.result });
@@ -510,7 +518,8 @@ async function pageSummaries(store: IDBObjectStore, offset: number, limit: numbe
 }
 
 async function searchSummaries(store: IDBObjectStore, query: string, offset: number, limit: number): Promise<GameSummary[]> {
-  const firstToken = query.split(' ')[0];
+  const queryTokens = query.split(' ').filter(Boolean);
+  const firstToken = queryTokens[0];
   const range = IDBKeyRange.bound(firstToken, `${firstToken}\uffff`);
   const index = store.index('searchTokens');
   return new Promise((resolve, reject) => {
@@ -526,7 +535,8 @@ async function searchSummaries(store: IDBObjectStore, query: string, offset: num
         return;
       }
       const row = cursor.value as GameSummary;
-      if (!seen.has(row.id) && row.searchText.includes(query)) {
+      const matches = queryTokens.every((token) => row.searchText.includes(token));
+      if (!seen.has(row.id) && matches) {
         seen.add(row.id);
         if (skipped < offset) skipped += 1;
         else rows.push(row);
