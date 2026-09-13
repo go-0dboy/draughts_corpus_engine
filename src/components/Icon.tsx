@@ -17,7 +17,9 @@ export type IconName =
   | 'openings'
   | 'tactics'
   | 'evaluation'
-  | 'players';
+  | 'players'
+  | 'settings'
+  | 'close';
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {
   name: IconName;
@@ -73,5 +75,9 @@ export function Icon({ name, size = 24, ...props }: IconProps) {
       return <svg {...common}><path d="M4 18h16M6 15l3-4 3 2 5-7 1 2" /></svg>;
     case 'players':
       return <svg {...common}><circle cx="9" cy="8" r="3" /><path d="M4 19c.5-3.2 2.2-5 5-5s4.5 1.8 5 5" /><circle cx="17" cy="9" r="2" /><path d="M15.5 14.5c2.4.3 3.8 1.8 4.1 4.5" /></svg>;
+    case 'settings':
+      return <svg {...common}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.86 2.86-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1V21H9.6v-.08a1.7 1.7 0 0 0-.4-1 1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06-2.86-2.86.06-.06A1.7 1.7 0 0 0 3.8 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4H2V9.6h.08a1.7 1.7 0 0 0 1-.4 1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06L6.14 3.4l.06.06A1.7 1.7 0 0 0 8.08 3.8a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1V2h4.04v.08a1.7 1.7 0 0 0 .4 1 1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.86 2.86-.06.06A1.7 1.7 0 0 0 19.32 8a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1 .4H21v4.04h-.08a1.7 1.7 0 0 0-1 .4 1.7 1.7 0 0 0-.52 1.16Z" /></svg>;
+    case 'close':
+      return <svg {...common}><path d="M6 6l12 12M18 6 6 18" /></svg>;
   }
 }
