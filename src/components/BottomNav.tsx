@@ -1,6 +1,6 @@
 import { Icon, type IconName } from './Icon';
 
-export type AppTab = 'games' | 'position' | 'import' | 'tools';
+export type AppTab = 'games' | 'position' | 'import' | 'tools' | 'settings';
 
 interface BottomNavProps {
   active: AppTab;
@@ -12,6 +12,7 @@ const ITEMS: Array<{ id: AppTab; icon: IconName; label: string }> = [
   { id: 'position', icon: 'position', label: 'Позиция' },
   { id: 'import', icon: 'import', label: 'Импорт' },
   { id: 'tools', icon: 'tools', label: 'Инструменты' },
+  { id: 'settings', icon: 'settings', label: 'Настройки' },
 ];
 
 export function BottomNav({ active, onChange }: BottomNavProps) {
@@ -26,7 +27,7 @@ export function BottomNav({ active, onChange }: BottomNavProps) {
           aria-current={active === item.id ? 'page' : undefined}
         >
           <span className="bottom-nav-indicator" aria-hidden="true">
-            <Icon name={item.icon} size={22} />
+            <Icon name={item.icon} size={21} />
           </span>
           <span className="bottom-nav-label">{item.label}</span>
         </button>
