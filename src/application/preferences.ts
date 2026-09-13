@@ -1,26 +1,30 @@
 export const APP_THEMES = ['system', 'dark', 'light'] as const;
 export type AppTheme = (typeof APP_THEMES)[number];
 
-export const BOARD_SKINS = ['classic', 'green', 'graphite', 'sand', 'cherry', 'ocean', 'marble'] as const;
+export const BOARD_SKINS = ['auto', 'classic', 'green', 'graphite', 'sand', 'cherry', 'ocean', 'marble'] as const;
 export type BoardSkin = (typeof BOARD_SKINS)[number];
 
 export interface AppPreferences {
   theme: AppTheme;
+  /** `auto` keeps the board in the same visual family as the resolved app theme. */
   boardSkin: BoardSkin;
 }
 
-const STORAGE_KEY = 'draughts-corpus-engine:preferences:v1';
+const STORAGE_KEY = 'draughts-corpus-engine:preferences:v2';
+const LEGACY_STORAGE_KEY = 'draughts-corpus-engine:preferences:v1';
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
   theme: 'system',
-  boardSkin: 'classic',
+  boardSkin: 'auto',
 };
 
 export function loadPreferences(): AppPreferences {
   if (typeof window === 'undefined') return { ...DEFAULT_PREFERENCES };
   try {
-    const value = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<AppPreferences>;
-    return sanitizePreferences(value);
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+      ?? window.localStorage.getItem(LEGACY_STORAGE_KEY)
+      ?? '{}';
+    return sanitizePreferences(JSON.parse(raw) as Partial<AppPreferences>);
   } catch {
     return { ...DEFAULT_PREFERENCES };
   }
@@ -35,21 +39,36 @@ export function savePreferences(patch: Partial<AppPreferences>): AppPreferences 
   return next;
 }
 
+export function resolvedTheme(preferences = loadPreferences()): Exclude<AppTheme, 'system'> {
+  if (preferences.theme !== 'system') return preferences.theme;
+  if (typeof window === 'undefined' || !window.matchMedia) return 'dark';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 export function applyPreferences(preferences = loadPreferences()): void {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
+  root.dataset.theme = resolvedTheme(preferences);
+  root.dataset.themePreference = preferences.theme;
   root.dataset.board = preferences.boardSkin;
+  root.style.colorScheme = preferences.theme === 'system' ? 'light dark' : preferences.theme;
+}
 
-  if (preferences.theme === 'system') {
-    const dark = typeof window === 'undefined' || !window.matchMedia
-      ? true
-      : window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.dataset.theme = dark ? 'dark' : 'light';
-    root.dataset.themePreference = 'system';
-  } else {
-    root.dataset.theme = preferences.theme;
-    root.dataset.themePreference = preferences.theme;
-  }
+/**
+ * Keeps `theme: system` live when Android/browser appearance changes while the
+ * application is already open. Returns a cleanup function for React effects.
+ */
+export function watchSystemAppearance(onChange?: (preferences: AppPreferences) => void): () => void {
+  if (typeof window === 'undefined' || !window.matchMedia) return () => undefined;
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  const handleChange = () => {
+    const preferences = loadPreferences();
+    if (preferences.theme !== 'system') return;
+    applyPreferences(preferences);
+    onChange?.(preferences);
+  };
+  media.addEventListener?.('change', handleChange);
+  return () => media.removeEventListener?.('change', handleChange);
 }
 
 function sanitizePreferences(value: Partial<AppPreferences>): AppPreferences {
