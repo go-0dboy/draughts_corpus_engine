@@ -23,7 +23,7 @@ describe('lexPdn', () => {
   });
 
   it('keeps unknown OCR fragments instead of throwing', () => {
-    const tokens = lexPdn('1. c3-d4 ??? f6-e5');
-    expect(tokens.some((token) => token.type === 'unknown' && token.raw === '???')).toBe(true);
+    const tokens = lexPdn('1. c3-d4 OCRBAD f6-e5');
+    expect(tokens.some((token) => token.type === 'unknown' && token.raw === 'OCRBAD')).toBe(true);
   });
 });
