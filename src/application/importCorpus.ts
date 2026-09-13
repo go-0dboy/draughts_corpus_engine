@@ -11,8 +11,22 @@ export interface ImportProgress {
   done: boolean;
 }
 
+export function importCorpusFile(
+  file: File,
+  onProgress: (progress: ImportProgress) => void,
+): Promise<ImportProgress> {
+  return runImport({ type: 'import-file', file }, onProgress);
+}
+
 export function importCorpusText(
   text: string,
+  onProgress: (progress: ImportProgress) => void,
+): Promise<ImportProgress> {
+  return runImport({ type: 'import-text', text }, onProgress);
+}
+
+function runImport(
+  request: { type: 'import-file'; file: File } | { type: 'import-text'; text: string },
   onProgress: (progress: ImportProgress) => void,
 ): Promise<ImportProgress> {
   return new Promise((resolve, reject) => {
@@ -42,6 +56,6 @@ export function importCorpusText(
       reject(new Error(event.message || 'Ошибка фонового импорта корпуса.'));
     };
 
-    worker.postMessage({ type: 'import', text });
+    worker.postMessage(request);
   });
 }
