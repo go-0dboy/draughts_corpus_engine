@@ -4,6 +4,55 @@
  * live in the frame around it and never consume space inside a square.
  */
 
+:root[data-board='classic'] {
+  --board-light: #e9d9b2;
+  --board-dark: #8a6445;
+  --board-frame-color: #4f3928;
+  --board-highlight: #e8b94f;
+}
+
+:root[data-board='green'] {
+  --board-light: #e9dfbd;
+  --board-dark: #70816f;
+  --board-frame-color: #303a34;
+  --board-highlight: #e9c75d;
+}
+
+:root[data-board='graphite'] {
+  --board-light: #c9ccc8;
+  --board-dark: #626a66;
+  --board-frame-color: #292f2c;
+  --board-highlight: #e6bd58;
+}
+
+:root[data-board='sand'] {
+  --board-light: #ead8b2;
+  --board-dark: #a18460;
+  --board-frame-color: #594b3a;
+  --board-highlight: #d7a53d;
+}
+
+:root[data-board='cherry'] {
+  --board-light: #ead6c5;
+  --board-dark: #8a514a;
+  --board-frame-color: #4a2928;
+  --board-highlight: #e7bd55;
+}
+
+:root[data-board='ocean'] {
+  --board-light: #d5e0dc;
+  --board-dark: #58747a;
+  --board-frame-color: #2d4146;
+  --board-highlight: #f0c65b;
+}
+
+:root[data-board='marble'] {
+  --board-light: #e5e3df;
+  --board-dark: #87908b;
+  --board-frame-color: #3c4541;
+  --board-highlight: #d7b34f;
+}
+
 .board-wrap,
 .position-board-section {
   padding-top: 4px;
@@ -11,7 +60,6 @@
 
 .board-frame {
   --board-coord-rail: 17px;
-  --board-frame-bg: #28302c;
   width: 100%;
   display: grid;
   grid-template-columns: var(--board-coord-rail) minmax(0, 1fr) var(--board-coord-rail);
@@ -19,7 +67,7 @@
   padding: 3px;
   border: 1px solid rgba(255, 255, 255, .09);
   border-radius: 19px;
-  background: var(--board-frame-bg);
+  background: var(--board-frame-color, #28302c);
   box-shadow: 0 12px 30px rgba(0, 0, 0, .24);
   overflow: hidden;
   user-select: none;
