@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import { iterateGameSources, parsePdnGameSource, type PdnGame } from '../corpus/pdn';
+import { iterateGameSourcesFromBlob } from '../corpus/pdnStream';
 import { getCorpusStats, storeGamesBatch } from '../storage/corpusDb';
 
 const BATCH_SIZE = 100;
@@ -17,13 +18,13 @@ export type ImportWorkerMessage =
 self.onmessage = (event: MessageEvent<ImportRequest>) => {
   const request = event.data;
   if (request.type === 'import-text') {
-    void importText(request.text);
+    void importSources(iterateGameSources(request.text));
   } else if (request.type === 'import-file') {
-    void request.file.text().then(importText).catch(reportFatal);
+    void importSources(iterateGameSourcesFromBlob(request.file));
   }
 };
 
-async function importText(text: string): Promise<void> {
+async function importSources(sources: Iterable<string> | AsyncIterable<string>): Promise<void> {
   let parsed = 0;
   let imported = 0;
   let skipped = 0;
@@ -31,7 +32,7 @@ async function importText(text: string): Promise<void> {
   let batch: PdnGame[] = [];
 
   try {
-    for (const source of iterateGameSources(text)) {
+    for await (const source of sources) {
       parsed += 1;
       try {
         batch.push(parsePdnGameSource(source, parsed));
