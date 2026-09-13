@@ -31,6 +31,14 @@ a3-b4 c5xa3 10. c1-d2 a3xe3 11. f2xa5 2-0
 f4xh6 d6-e5 3. a3-b4 $3 c5xc1 4. c3-b4 $3 e5xg3 5. h2xf4 a5xc3
 6. f4-g5 c1xf4 7. g5xe7 f8xd6 8. h6xh6 2-0`;
 
+const INVALID = `[White "A"]
+[Black "B"]
+[Result "2-0"]
+[GameType "25"]
+[FEN "W:Wc3:Bd4"]
+
+1. c3xa5 2-0`;
+
 describe('historical Russian PDN reader', () => {
   it('splits games by header blocks instead of Event position', () => {
     const result = parsePdn(LEGACY);
@@ -47,11 +55,11 @@ describe('historical Russian PDN reader', () => {
     expect(move.notation).toBe('g5:e3');
   });
 
-  it('keeps a game when shortened capture replay is not yet resolvable', () => {
+  it('resolves shortened captures from the real corpus through legal move generation', () => {
     const result = parsePdn(LEGACY);
     expect(result.games[0].moves.at(-1)).toBe('f2xa5');
-    expect(result.games[0].replay.status).toBe('partial');
-    expect(result.games[0].warnings.length).toBeGreaterThan(0);
+    expect(result.games[0].replay.status).toBe('complete');
+    expect(result.games[1].replay.status).toBe('complete');
   });
 
   it('understands default draughts results', () => {
@@ -60,9 +68,14 @@ describe('historical Russian PDN reader', () => {
     expect(classifyResult('0-2')).toBe('black-win');
   });
 
-  it('does not index partially replayed games', () => {
-    const games = parsePdn(LEGACY).games;
+  it('preserves but does not index a game whose replay is invalid', () => {
+    const games = parsePdn(INVALID).games;
+    expect(games).toHaveLength(1);
+    expect(games[0].replay.status).toBe('partial');
+    expect(games[0].warnings).toHaveLength(1);
+
     const corpus = new CorpusIndex(games);
-    expect(corpus.pendingReplayGameCount()).toBeGreaterThan(0);
+    expect(corpus.pendingReplayGameCount()).toBe(1);
+    expect(corpus.indexedGameCount()).toBe(0);
   });
 });
