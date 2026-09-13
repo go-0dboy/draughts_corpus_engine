@@ -1,0 +1,64 @@
+:root[data-theme='dark'] {
+  --bg: #0b0f0d;
+  --surface: #111713;
+  --surface-container: #161d19;
+  --surface-container-high: #1d2721;
+  --surface-container-low: #0f1411;
+  --on-surface: #edf2ee;
+  --on-surface-muted: #9ca9a1;
+  --primary: #b9d9c4;
+  --on-primary: #102117;
+  --secondary: #e2c374;
+  --outline: #35423b;
+  --outline-soft: #25312b;
+  --error: #ffb4ab;
+  --success: #9fd6ae;
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f8f5;
+  --surface: #ffffff;
+  --surface-container: #edf2ee;
+  --surface-container-high: #e3ebe5;
+  --surface-container-low: #fafcf9;
+  --on-surface: #172019;
+  --on-surface-muted: #637067;
+  --primary: #2d6a4b;
+  --on-primary: #ffffff;
+  --secondary: #8d6418;
+  --outline: #aab7ae;
+  --outline-soft: #d7e0d9;
+  --error: #ba1a1a;
+  --success: #2e6c43;
+}
+
+:root[data-theme='light'] body,
+:root[data-theme='light'] .mobile-app {
+  background: var(--bg);
+  color: var(--on-surface);
+}
+
+:root[data-theme='light'] .bottom-nav,
+:root[data-theme='light'] .app-bar,
+:root[data-theme='light'] .compact-action-bar,
+:root[data-theme='light'] .compact-game-bar {
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border-color: var(--outline-soft);
+}
+
+:root[data-theme='light'] .bottom-sheet {
+  background: var(--surface);
+  color: var(--on-surface);
+}
+
+:root[data-theme='light'] .game-card,
+:root[data-theme='light'] .tool-row-modern,
+:root[data-theme='light'] .compact-details,
+:root[data-theme='light'] .compact-report {
+  color: var(--on-surface);
+}
+
+:root[data-theme='light'] textarea,
+:root[data-theme='light'] input {
+  color: var(--on-surface);
+}
