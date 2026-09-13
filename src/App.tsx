@@ -1,13 +1,38 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { importCorpusFile, importCorpusText, type ImportProgress } from './application/importCorpus';
+import {
+  APP_THEMES,
+  BOARD_SKINS,
+  loadPreferences,
+  savePreferences,
+  watchSystemAppearance,
+  type AppPreferences,
+  type AppTheme,
+  type BoardSkin,
+} from './application/preferences';
 import { Board, type BoardOrientation } from './components/Board';
 import { BottomNav, type AppTab } from './components/BottomNav';
 import { Icon, type IconName } from './components/Icon';
-import { CorpusIndex } from './corpus';
-import { parsePdn, type PdnGame } from './corpus/pdn';
 import { parseFen, toFen } from './core/fen';
-import { INITIAL_POSITION } from './core/position';
+import { INITIAL_POSITION, positionKey } from './core/position';
 import { parseRussianMove } from './core/russianMove';
 import type { Position } from './core/types';
+import type { PdnGame } from './corpus/pdn';
+import {
+  clearCorpusDatabase,
+  getCorpusStats,
+  getPositionReport,
+  listGames,
+  listPositionOccurrences,
+  loadGameForViewer,
+  type CorpusStats,
+  type GameSummary,
+  type PositionDbReport,
+  type PositionOccurrenceView,
+} from './storage/corpusDb';
+
+const PAGE_SIZE = 40;
+const OCCURRENCE_PAGE_SIZE = 30;
 
 const SAMPLE_PDN = `[Event "Учебная партия"]
 [Site "Draughts Corpus Engine"]
@@ -25,25 +50,37 @@ type View = AppTab | 'viewer';
 function App() {
   const [view, setView] = useState<View>('games');
   const [lastTab, setLastTab] = useState<AppTab>('games');
-  const [games, setGames] = useState<PdnGame[]>([]);
-  const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
-  const [ply, setPly] = useState(0);
+  const [stats, setStats] = useState<CorpusStats>({ games: 0, positions: 0 });
+  const [gameRows, setGameRows] = useState<GameSummary[]>([]);
   const [gameQuery, setGameQuery] = useState('');
-  const [pdnText, setPdnText] = useState(SAMPLE_PDN);
-  const [importMessages, setImportMessages] = useState<string[]>([]);
-  const [positionSearch, setPositionSearch] = useState<Position>({ ...INITIAL_POSITION });
-  const [fenInput, setFenInput] = useState(toFen(INITIAL_POSITION));
-  const [positionError, setPositionError] = useState('');
-  const [boardOrientation, setBoardOrientation] = useState<BoardOrientation>('white');
+  const [gamesLoading, setGamesLoading] = useState(false);
+  const [gamesExhausted, setGamesExhausted] = useState(false);
+
+  const [selectedGame, setSelectedGame] = useState<PdnGame | null>(null);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [ply, setPly] = useState(0);
+  const [viewerReport, setViewerReport] = useState<PositionDbReport | null>(null);
   const [positionSheetOpen, setPositionSheetOpen] = useState(false);
 
-  const corpus = useMemo(() => new CorpusIndex(games), [games]);
-  const selectedGame = games.find((game) => game.id === selectedGameId) ?? null;
+  const [positionSearch, setPositionSearch] = useState<Position>({ ...INITIAL_POSITION });
+  const [positionReport, setPositionReport] = useState<PositionDbReport>(emptyReport(INITIAL_POSITION));
+  const [fenInput, setFenInput] = useState(toFen(INITIAL_POSITION));
+  const [positionError, setPositionError] = useState('');
+  const [positionOccurrences, setPositionOccurrences] = useState<PositionOccurrenceView[]>([]);
+  const [showOccurrences, setShowOccurrences] = useState(false);
+  const [occurrencesExhausted, setOccurrencesExhausted] = useState(false);
+  const [occurrencesLoading, setOccurrencesLoading] = useState(false);
+
+  const [boardOrientation, setBoardOrientation] = useState<BoardOrientation>('white');
+  const [pdnText, setPdnText] = useState(SAMPLE_PDN);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
+  const [importError, setImportError] = useState('');
+  const [preferences, setPreferences] = useState<AppPreferences>(() => loadPreferences());
+
   const maxViewPly = selectedGame ? Math.max(0, selectedGame.positions.length - 1) : 0;
   const safePly = Math.min(ply, maxViewPly);
   const currentPosition = selectedGame?.positions[safePly] ?? null;
-  const currentReport = currentPosition ? corpus.report(currentPosition) : null;
-  const positionReport = corpus.report(positionSearch);
+  const isInitialPosition = positionKey(positionSearch) === positionKey(INITIAL_POSITION);
 
   const highlightedSquares = useMemo(() => {
     if (!selectedGame || safePly === 0) return [];
@@ -57,21 +94,54 @@ function App() {
     }
   }, [selectedGame, safePly]);
 
-  const filteredGames = useMemo(() => {
-    const query = gameQuery.trim().toLocaleLowerCase('ru');
-    if (!query) return games;
-    return games.filter((game) => {
-      const text = [
-        game.headers.White,
-        game.headers.Black,
-        game.headers.Event,
-        game.headers.Site,
-        game.headers.Date,
-        game.result,
-      ].filter(Boolean).join(' ').toLocaleLowerCase('ru');
-      return text.includes(query);
+  const refreshStats = useCallback(async () => {
+    setStats(await getCorpusStats());
+  }, []);
+
+  const reloadGames = useCallback(async () => {
+    setGamesLoading(true);
+    try {
+      const rows = await listGames({ query: gameQuery, limit: PAGE_SIZE });
+      setGameRows(rows);
+      setGamesExhausted(rows.length < PAGE_SIZE);
+    } finally {
+      setGamesLoading(false);
+    }
+  }, [gameQuery]);
+
+  const refreshPositionReport = useCallback(async (position: Position) => {
+    setPositionReport(await getPositionReport(position));
+  }, []);
+
+  useEffect(() => {
+    void refreshStats();
+  }, [refreshStats]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void reloadGames(), 220);
+    return () => window.clearTimeout(timer);
+  }, [reloadGames]);
+
+  useEffect(() => {
+    setShowOccurrences(false);
+    setPositionOccurrences([]);
+    setOccurrencesExhausted(false);
+    void refreshPositionReport(positionSearch);
+  }, [positionSearch, refreshPositionReport]);
+
+  useEffect(() => watchSystemAppearance((next) => setPreferences(next)), []);
+
+  useEffect(() => {
+    if (!currentPosition) {
+      setViewerReport(null);
+      return;
+    }
+    let cancelled = false;
+    void getPositionReport(currentPosition).then((report) => {
+      if (!cancelled) setViewerReport(report);
     });
-  }, [games, gameQuery]);
+    return () => { cancelled = true; };
+  }, [currentPosition]);
 
   const switchTab = (tab: AppTab) => {
     setPositionSheetOpen(false);
@@ -79,35 +149,31 @@ function App() {
     setView(tab);
   };
 
-  const openGame = (game: PdnGame, targetPly = 0) => {
-    const availablePly = Math.max(0, game.positions.length - 1);
-    setSelectedGameId(game.id);
-    setPly(Math.max(0, Math.min(targetPly, availablePly)));
-    setPositionSheetOpen(false);
-    setView('viewer');
-  };
-
-  const importText = (text: string) => {
-    const result = parsePdn(text);
-    if (result.games.length > 0) {
-      setGames((previous) => {
-        const existingSources = new Set(previous.map((game) => game.source));
-        const fresh = result.games.filter((game) => !existingSources.has(game.source));
-        return [...previous, ...fresh];
-      });
+  const openGame = async (gameId: string, targetPly = 0) => {
+    setViewerLoading(true);
+    try {
+      const game = await loadGameForViewer(gameId);
+      if (!game) return;
+      if (view !== 'viewer') setLastTab(view as AppTab);
+      setSelectedGame(game);
+      setPly(Math.max(0, Math.min(targetPly, Math.max(0, game.positions.length - 1))));
+      setPositionSheetOpen(false);
+      setView('viewer');
+    } finally {
+      setViewerLoading(false);
     }
-    setImportMessages([
-      `Найдено партий: ${result.games.length}`,
-      `Ошибок: ${result.errors.length}`,
-      ...result.errors.slice(0, 8),
-    ]);
   };
 
-  const loadFile = async (file: File | undefined) => {
-    if (!file) return;
-    const text = await file.text();
-    setPdnText(text);
-    importText(text);
+  const loadMoreGames = async () => {
+    if (gamesLoading || gamesExhausted) return;
+    setGamesLoading(true);
+    try {
+      const rows = await listGames({ query: gameQuery, offset: gameRows.length, limit: PAGE_SIZE });
+      setGameRows((current) => [...current, ...rows]);
+      setGamesExhausted(rows.length < PAGE_SIZE);
+    } finally {
+      setGamesLoading(false);
+    }
   };
 
   const applyFen = () => {
@@ -133,153 +199,174 @@ function App() {
     setBoardOrientation((value) => value === 'white' ? 'black' : 'white');
   };
 
-  if (view === 'viewer' && selectedGame && currentPosition && currentReport) {
-    const currentMove = safePly > 0 ? selectedGame.moves[safePly - 1] : 'Стартовая позиция';
-    const isReplayPartial = selectedGame.replay.status === 'partial';
+  const openOccurrences = async () => {
+    if (occurrencesLoading) return;
+    setShowOccurrences(true);
+    if (positionOccurrences.length > 0) return;
+    await loadMoreOccurrences(true);
+  };
 
+  const loadMoreOccurrences = async (reset = false) => {
+    if (occurrencesLoading || (!reset && occurrencesExhausted)) return;
+    setOccurrencesLoading(true);
+    try {
+      const offset = reset ? 0 : positionOccurrences.length;
+      const rows = await listPositionOccurrences(positionSearch, { offset, limit: OCCURRENCE_PAGE_SIZE });
+      setPositionOccurrences((current) => reset ? rows : [...current, ...rows]);
+      setOccurrencesExhausted(rows.length < OCCURRENCE_PAGE_SIZE);
+    } finally {
+      setOccurrencesLoading(false);
+    }
+  };
+
+  const handleFileImport = async (file: File | undefined) => {
+    if (!file) return;
+    setImportError('');
+    setImportProgress({ parsed: 0, imported: 0, skipped: 0, errors: 0, done: false });
+    try {
+      await importCorpusFile(file, setImportProgress);
+      await Promise.all([refreshStats(), reloadGames(), refreshPositionReport(positionSearch)]);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleTextImport = async () => {
+    setImportError('');
+    try {
+      await importCorpusText(pdnText, setImportProgress);
+      await Promise.all([refreshStats(), reloadGames(), refreshPositionReport(positionSearch)]);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const updatePreferences = (patch: Partial<AppPreferences>) => {
+    setPreferences(savePreferences(patch));
+  };
+
+  const clearDatabase = async () => {
+    if (!window.confirm('Удалить все партии и позиции из локальной базы на этом устройстве?')) return;
+    await clearCorpusDatabase();
+    setSelectedGame(null);
+    setPositionOccurrences([]);
+    setShowOccurrences(false);
+    await Promise.all([refreshStats(), reloadGames(), refreshPositionReport(positionSearch)]);
+  };
+
+  if (view === 'viewer') {
     return (
       <div className="mobile-app viewer-screen">
-        <header className="app-bar viewer-bar">
-          <button className="icon-button ghost-button" type="button" aria-label="Назад" onClick={() => setView(lastTab)}>
-            <Icon name="back" />
-          </button>
-          <div className="app-bar-title">
-            <strong>{selectedGame.headers.White ?? '—'} — {selectedGame.headers.Black ?? '—'}</strong>
-            <span>{[selectedGame.headers.Event, selectedGame.headers.Date].filter(Boolean).join(' · ') || 'Партия'}</span>
-          </div>
-          <div className="app-bar-actions">
-            <span className="result-chip">{selectedGame.result}</span>
-            <button className="icon-button ghost-button" type="button" aria-label="Перевернуть доску" onClick={flipBoard}>
-              <Icon name="flip" />
-            </button>
-          </div>
-        </header>
+        <main className="viewer-content board-first-viewer">
+          {viewerLoading && <p className="loading-line">Загрузка партии…</p>}
+          {selectedGame && currentPosition && (
+            <>
+              {selectedGame.replay.status === 'partial' && (
+                <div className="replay-notice" role="status">
+                  Позиции восстановлены до {maxViewPly}-го полухода из {selectedGame.moves.length}.
+                </div>
+              )}
 
-        <main className="viewer-content">
-          {isReplayPartial && (
-            <div className="replay-notice" role="status">
-              Позиции восстановлены до {maxViewPly}-го полухода из {selectedGame.moves.length}.
-            </div>
+              <section className="board-wrap viewer-board-wrap">
+                <Board position={currentPosition} orientation={boardOrientation} highlightSquares={highlightedSquares} />
+              </section>
+
+              <section className="game-context-line">
+                <div>
+                  <strong>{selectedGame.headers.White ?? '—'} — {selectedGame.headers.Black ?? '—'}</strong>
+                  <span>{[selectedGame.headers.Event, selectedGame.headers.Date].filter(Boolean).join(' · ') || 'Партия'}</span>
+                </div>
+                <span className="result-chip">{selectedGame.result}</span>
+                <button className="icon-button ghost-button" type="button" aria-label="Перевернуть доску" onClick={flipBoard}>
+                  <Icon name="flip" />
+                </button>
+              </section>
+
+              <section className="current-move-line" aria-live="polite">
+                <span>{safePly === 0 ? 'Начало партии' : `Полуход ${safePly}`}</span>
+                <strong>{safePly > 0 ? selectedGame.moves[safePly - 1] : 'Стартовая позиция'}</strong>
+              </section>
+
+              <section className="move-controller" aria-label="Навигация по партии">
+                <button type="button" aria-label="В начало" onClick={() => setPly(0)} disabled={safePly === 0}><Icon name="first" /></button>
+                <button type="button" aria-label="Предыдущий ход" onClick={() => setPly(Math.max(0, safePly - 1))} disabled={safePly === 0}><Icon name="previous" /></button>
+                <div><strong>{safePly}</strong><span>из {maxViewPly}</span></div>
+                <button type="button" aria-label="Следующий ход" onClick={() => setPly(Math.min(maxViewPly, safePly + 1))} disabled={safePly >= maxViewPly}><Icon name="next" /></button>
+                <button type="button" aria-label="В конец" onClick={() => setPly(maxViewPly)} disabled={safePly >= maxViewPly}><Icon name="last" /></button>
+              </section>
+
+              <section className="move-strip" aria-label="Ходы партии">
+                {selectedGame.moves.slice(0, maxViewPly).map((move, index) => (
+                  <button type="button" key={`${move}-${index}`} className={safePly === index + 1 ? 'active' : ''} onClick={() => setPly(index + 1)}>
+                    <span>{index + 1}</span>{move}
+                  </button>
+                ))}
+              </section>
+
+              {viewerReport && (
+                <button type="button" className="position-insight" onClick={() => setPositionSheetOpen(true)} aria-haspopup="dialog">
+                  <div><span>Эта позиция</span><strong>{viewerReport.occurrences} {pluralGames(viewerReport.occurrences)}</strong></div>
+                  <Icon name="up" size={21} />
+                </button>
+              )}
+            </>
           )}
-
-          <section className="board-wrap">
-            <Board
-              position={currentPosition}
-              orientation={boardOrientation}
-              highlightSquares={highlightedSquares}
-            />
-          </section>
-
-          <section className="current-move-line" aria-live="polite">
-            <span>{safePly === 0 ? 'Начало партии' : `Полуход ${safePly}`}</span>
-            <strong>{currentMove}</strong>
-          </section>
-
-          <section className="move-controller" aria-label="Навигация по партии">
-            <button type="button" aria-label="В начало" onClick={() => setPly(0)} disabled={safePly === 0}><Icon name="first" /></button>
-            <button type="button" aria-label="Предыдущий ход" onClick={() => setPly(Math.max(0, safePly - 1))} disabled={safePly === 0}><Icon name="previous" /></button>
-            <div>
-              <strong>{safePly}</strong>
-              <span>из {maxViewPly}</span>
-            </div>
-            <button type="button" aria-label="Следующий ход" onClick={() => setPly(Math.min(maxViewPly, safePly + 1))} disabled={safePly >= maxViewPly}><Icon name="next" /></button>
-            <button type="button" aria-label="В конец" onClick={() => setPly(maxViewPly)} disabled={safePly >= maxViewPly}><Icon name="last" /></button>
-          </section>
-
-          <section className="move-strip" aria-label="Ходы партии">
-            {selectedGame.moves.slice(0, maxViewPly).map((move, index) => (
-              <button
-                type="button"
-                key={`${move}-${index}`}
-                className={safePly === index + 1 ? 'active' : ''}
-                onClick={() => setPly(index + 1)}
-              >
-                <span>{index + 1}</span>{move}
-              </button>
-            ))}
-          </section>
-
-          <button
-            type="button"
-            className="position-insight"
-            onClick={() => setPositionSheetOpen(true)}
-            aria-haspopup="dialog"
-          >
-            <div>
-              <span>Эта позиция</span>
-              <strong>{currentReport.occurrences.length} {pluralGames(currentReport.occurrences.length)}</strong>
-            </div>
-            <Icon name="up" size={21} />
-          </button>
         </main>
 
-        {positionSheetOpen && (
+        {positionSheetOpen && viewerReport && currentPosition && (
           <>
             <button className="sheet-backdrop" type="button" aria-label="Закрыть статистику" onClick={() => setPositionSheetOpen(false)} />
             <section className="bottom-sheet" role="dialog" aria-modal="true" aria-label="Статистика текущей позиции">
               <div className="sheet-handle" aria-hidden="true" />
               <div className="sheet-heading">
-                <div>
-                  <span className="section-kicker">Текущая позиция</span>
-                  <h2>{currentReport.occurrences.length} вхождений</h2>
-                </div>
+                <div><span className="section-kicker">Текущая позиция</span><h2>{viewerReport.occurrences} вхождений</h2></div>
                 <span className="side-chip">Ход {currentPosition.sideToMove === 'W' ? 'белых' : 'чёрных'}</span>
               </div>
-              <ResultStats report={currentReport} />
-              <ContinuationList report={currentReport} limit={6} />
+              <ResultStats report={viewerReport} />
+              <ContinuationList report={viewerReport} limit={6} />
               <div className="sheet-actions">
-                <button type="button" className="primary-button full-width" onClick={() => analyzePosition(currentPosition)}>Открыть Position Explorer</button>
+                <button type="button" className="primary-button full-width" onClick={() => analyzePosition(currentPosition)}>Открыть позицию</button>
                 <button type="button" className="secondary-button full-width" onClick={() => setPositionSheetOpen(false)}>Закрыть</button>
               </div>
             </section>
           </>
         )}
+
+        <BottomNav active={lastTab} onChange={switchTab} />
       </div>
     );
   }
 
-  const activeTab: AppTab = view === 'viewer' ? lastTab : view;
-
   return (
     <div className="mobile-app">
-      <main className="screen-content">
+      <main className="screen-content no-top-chrome">
         {view === 'games' && (
           <>
-            <ScreenHeader title="Партии" subtitle={`${games.length} партий · ${corpus.uniquePositionCount()} позиций`} />
-            <section className="screen-section">
+            <section className="screen-section content-top compact-overview">
+              <div className="corpus-mini-stats"><span><strong>{stats.games}</strong> партий</span><span><strong>{stats.positions}</strong> позиций</span></div>
               <label className="search-box">
                 <Icon name="search" size={21} />
-                <input
-                  type="search"
-                  value={gameQuery}
-                  onChange={(event) => setGameQuery(event.target.value)}
-                  placeholder="Игрок, турнир, год…"
-                  aria-label="Поиск партий"
-                />
+                <input type="search" value={gameQuery} onChange={(event) => setGameQuery(event.target.value)} placeholder="Игрок, турнир, год…" aria-label="Поиск партий" />
               </label>
             </section>
 
-            {games.length === 0 ? (
-              <EmptyState
-                title="Корпус пока пуст"
-                text="Импортируй PDN-файл, чтобы открыть партии и искать повторяющиеся позиции."
-                action="Импортировать PDN"
-                onAction={() => switchTab('import')}
-              />
-            ) : filteredGames.length === 0 ? (
+            {stats.games === 0 && !gamesLoading ? (
+              <EmptyState title="Корпус пока пуст" text="Импортируй PDN-файл. Партии будут сохранены в локальной базе, а не в памяти страницы." action="Импортировать PDN" onAction={() => switchTab('import')} />
+            ) : gameRows.length === 0 && !gamesLoading ? (
               <EmptyState title="Ничего не найдено" text="Измени строку поиска." />
             ) : (
               <section className="game-list-mobile">
-                {filteredGames.map((game) => (
-                  <button type="button" className="game-card" key={game.id} onClick={() => openGame(game)}>
+                {gameRows.map((game) => (
+                  <button type="button" className="game-card" key={game.id} onClick={() => void openGame(game.id)}>
                     <div className="game-card-main">
-                      <strong>{game.headers.White ?? '—'} — {game.headers.Black ?? '—'}</strong>
-                      <span>{[game.headers.Event, game.headers.Site].filter(Boolean).join(' · ') || 'Без названия'}</span>
-                      <small>{game.headers.Date || 'Дата неизвестна'} · {game.moves.length} полуходов</small>
+                      <strong>{game.white} — {game.black}</strong>
+                      <span>{[game.event, game.site].filter(Boolean).join(' · ') || 'Без названия'}</span>
+                      <small>{game.date || 'Дата неизвестна'} · {game.moveCount} полуходов</small>
                     </div>
                     <span className="game-card-result">{game.result}</span>
                   </button>
                 ))}
+                {!gamesExhausted && <button className="secondary-button full-width load-more" type="button" onClick={() => void loadMoreGames()} disabled={gamesLoading}>{gamesLoading ? 'Загрузка…' : 'Показать ещё'}</button>}
               </section>
             )}
           </>
@@ -287,8 +374,7 @@ function App() {
 
         {view === 'position' && (
           <>
-            <ScreenHeader title="Позиция" subtitle="Поиск по всему корпусу" />
-            <section className="position-board-section">
+            <section className="position-board-section content-top">
               <Board position={positionSearch} orientation={boardOrientation} />
               <div className="board-toolbar">
                 <span className="side-chip">Ход {positionSearch.sideToMove === 'W' ? 'белых' : 'чёрных'}</span>
@@ -297,49 +383,43 @@ function App() {
             </section>
 
             <details className="mobile-card fen-card">
-              <summary>Вставить FEN</summary>
+              <summary>Найти по FEN</summary>
               <label htmlFor="position-fen">FEN позиции</label>
-              <textarea
-                id="position-fen"
-                value={fenInput}
-                onChange={(event) => setFenInput(event.target.value)}
-                rows={3}
-                spellCheck={false}
-              />
+              <textarea id="position-fen" value={fenInput} onChange={(event) => setFenInput(event.target.value)} rows={3} spellCheck={false} />
               {positionError && <p className="inline-error">{positionError}</p>}
               <button type="button" className="primary-button full-width" onClick={applyFen}>Применить FEN</button>
             </details>
 
             <section className="mobile-card explorer-summary">
               <div className="card-heading-row">
-                <div>
-                  <span className="section-kicker">Position Explorer</span>
-                  <h2>{positionReport.occurrences.length} вхождений</h2>
-                </div>
+                <div><span className="section-kicker">Position Explorer</span><h2>{positionReport.occurrences} вхождений</h2></div>
               </div>
               <ResultStats report={positionReport} />
-              <ContinuationList report={positionReport} />
+              <ContinuationList report={positionReport} limit={12} />
             </section>
 
-            {positionReport.occurrences.length > 0 && (
-              <section className="mobile-card">
-                <h2>Партии с этой позицией</h2>
-                <div className="occurrence-list-mobile">
-                  {positionReport.occurrences.slice(0, 30).map((occurrence, index) => {
-                    const game = games.find((item) => item.id === occurrence.gameId);
-                    return (
-                      <button
-                        type="button"
-                        key={`${occurrence.gameId}-${occurrence.ply}-${index}`}
-                        disabled={!game}
-                        onClick={() => game && openGame(game, occurrence.ply)}
-                      >
+            {positionReport.occurrences > 0 && (
+              <section className="mobile-card occurrence-gate">
+                {isInitialPosition ? (
+                  <>
+                    <h2>Стартовая позиция</h2>
+                    <p>Почти каждая обычная партия начинается здесь, поэтому автоматически выводить десятки тысяч партий бессмысленно. Сначала смотри статистику первых ходов выше; список партий открывается только по запросу.</p>
+                  </>
+                ) : (
+                  <><h2>Партии с этой позицией</h2><p>Список подгружается из индекса порциями, поэтому размер корпуса не влияет на интерфейс.</p></>
+                )}
+                {!showOccurrences && <button type="button" className="secondary-button full-width" onClick={() => void openOccurrences()}>Показать партии</button>}
+                {showOccurrences && (
+                  <div className="occurrence-list-mobile">
+                    {positionOccurrences.map((occurrence, index) => (
+                      <button type="button" key={`${occurrence.gameId}-${occurrence.ply}-${index}`} onClick={() => void openGame(occurrence.gameId, occurrence.ply)}>
                         <strong>{occurrence.white} — {occurrence.black}</strong>
-                        <span>{occurrence.date} · позиция {occurrence.ply} · {occurrence.result}</span>
+                        <span>{[occurrence.date, occurrence.event, `позиция ${occurrence.ply}`, occurrence.result].filter(Boolean).join(' · ')}</span>
                       </button>
-                    );
-                  })}
-                </div>
+                    ))}
+                    {!occurrencesExhausted && <button type="button" className="secondary-button full-width load-more" onClick={() => void loadMoreOccurrences()} disabled={occurrencesLoading}>{occurrencesLoading ? 'Загрузка…' : 'Показать ещё'}</button>}
+                  </div>
+                )}
               </section>
             )}
           </>
@@ -347,36 +427,32 @@ function App() {
 
         {view === 'import' && (
           <>
-            <ScreenHeader title="Импорт" subtitle="Добавление партий в локальную библиотеку" />
-            <section className="import-hero mobile-card">
+            <section className="import-hero mobile-card content-top">
               <div className="import-icon" aria-hidden="true"><Icon name="upload" size={28} /></div>
-              <h2>Добавить партии</h2>
-              <p>Выбери PDN-файл. Исторические варианты записи будут нормализованы ядром, исходный текст при этом сохраняется.</p>
+              <h2>Добавить корпус</h2>
+              <p>PDN разбирается в отдельном потоке и пакетами записывается в IndexedDB. Интерфейс больше не хранит весь корпус в памяти.</p>
               <label className="primary-button file-picker full-width">
                 Выбрать .pdn
-                <input type="file" accept=".pdn,.txt,text/plain" onChange={(event) => void loadFile(event.target.files?.[0])} />
+                <input type="file" accept=".pdn,.txt,text/plain" onChange={(event) => void handleFileImport(event.target.files?.[0])} />
               </label>
             </section>
 
             <section className="mobile-card">
-              <h2>Локальная библиотека</h2>
+              <h2>Локальная база</h2>
               <div className="metric-grid">
-                <div><strong>{games.length}</strong><span>партий</span></div>
-                <div><strong>{corpus.uniquePositionCount()}</strong><span>позиций</span></div>
+                <div><strong>{stats.games}</strong><span>партий</span></div>
+                <div><strong>{stats.positions}</strong><span>уникальных позиций</span></div>
               </div>
-              {importMessages.length > 0 && (
-                <div className="import-report-mobile">
-                  {importMessages.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}
-                </div>
-              )}
+              {importProgress && <ImportStatus progress={importProgress} />}
+              {importError && <p className="inline-error">{importError}</p>}
             </section>
 
             <details className="mobile-card developer-import">
-              <summary>Диагностика и текстовый импорт</summary>
+              <summary>Тестовый текстовый импорт</summary>
               <textarea value={pdnText} onChange={(event) => setPdnText(event.target.value)} rows={8} spellCheck={false} />
               <div className="stacked-actions">
-                <button type="button" className="primary-button" onClick={() => importText(pdnText)}>Импортировать текст</button>
-                <button type="button" className="secondary-button" onClick={() => setPdnText(SAMPLE_PDN)}>Вставить учебный пример</button>
+                <button type="button" className="primary-button" onClick={() => void handleTextImport()}>Импортировать текст</button>
+                <button type="button" className="secondary-button" onClick={() => setPdnText(SAMPLE_PDN)}>Учебный пример</button>
               </div>
             </details>
           </>
@@ -384,48 +460,98 @@ function App() {
 
         {view === 'tools' && (
           <>
-            <ScreenHeader title="Инструменты" subtitle="Расширения аналитического ядра" />
+            <section className="mobile-card content-top tools-explainer">
+              <span className="section-kicker">Расширяемое ядро</span>
+              <h2>Инструменты — это модули анализа корпуса</h2>
+              <p>Они не являются отдельными базами или режимами игры. Каждый модуль получает позиции и партии из общего ядра. Доступные инструменты можно открывать, будущие явно помечены как находящиеся в разработке.</p>
+            </section>
+
+            <section className="mobile-card available-tool">
+              <div className="tool-icon" aria-hidden="true"><Icon name="evaluation" size={22} /></div>
+              <div className="tool-copy">
+                <span className="available-badge">Доступно</span>
+                <h2>Статистика корпуса</h2>
+                <p>Быстрая проверка размера локальной базы. Подробная аналитика повторов и дебютов будет строиться здесь же поверх индексов.</p>
+                <div className="metric-grid"><div><strong>{stats.games}</strong><span>партий</span></div><div><strong>{stats.positions}</strong><span>позиций</span></div></div>
+              </div>
+            </section>
+
             <section className="tool-grid">
-              <ToolCard icon="openings" title="Дебюты" text="Дерево вариантов, частота и результативность." status="Планируется" />
-              <ToolCard icon="tactics" title="Комбинации" text="Поиск тактических эпизодов и жертв в реальных партиях." status="Планируется" />
-              <ToolCard icon="evaluation" title="Оценка позиции" text="Классическая и нейросетевая оценка без поиска продолжения." status="Планируется" />
-              <ToolCard icon="players" title="Игроки" text="Репертуар, статистика, сравнение и подготовка к сопернику." status="Планируется" />
+              <ToolCard icon="openings" title="Дебюты" text="Дерево вариантов, частота и результативность." />
+              <ToolCard icon="tactics" title="Комбинации" text="Поиск тактических эпизодов и жертв в реальных партиях." />
+              <ToolCard icon="evaluation" title="Оценка позиции" text="Классическая и нейросетевая оценка без поиска лучшего хода." />
+              <ToolCard icon="players" title="Игроки" text="Репертуар, статистика и подготовка к сопернику." />
             </section>
           </>
         )}
+
+        {view === 'settings' && (
+          <SettingsView preferences={preferences} onChange={updatePreferences} onClear={() => void clearDatabase()} stats={stats} />
+        )}
       </main>
 
-      <BottomNav active={activeTab} onChange={switchTab} />
+      <BottomNav active={view} onChange={switchTab} />
     </div>
   );
 }
 
-interface ScreenHeaderProps {
-  title: string;
-  subtitle: string;
-}
+function SettingsView({
+  preferences,
+  onChange,
+  onClear,
+  stats,
+}: {
+  preferences: AppPreferences;
+  onChange: (patch: Partial<AppPreferences>) => void;
+  onClear: () => void;
+  stats: CorpusStats;
+}) {
+  const themeLabels: Record<AppTheme, string> = { system: 'Как в системе', dark: 'Тёмная', light: 'Светлая' };
+  const boardLabels: Record<BoardSkin, string> = {
+    auto: 'Как приложение',
+    classic: 'Классика',
+    green: 'Сукно',
+    graphite: 'Графит',
+    sand: 'Песок',
+    cherry: 'Вишня',
+    ocean: 'Океан',
+    marble: 'Мрамор',
+  };
 
-function ScreenHeader({ title, subtitle }: ScreenHeaderProps) {
   return (
-    <header className="screen-header">
-      <div>
-        <span className="app-caption">Русские шашки</span>
-        <h1>{title}</h1>
-        <p>{subtitle}</p>
-      </div>
-      <span className="app-mark" aria-hidden="true">DC</span>
-    </header>
+    <div className="settings-view content-top">
+      <section className="settings-section">
+        <h2>Оформление</h2>
+        <div className="choice-list">
+          {APP_THEMES.map((theme) => (
+            <button type="button" key={theme} className={preferences.theme === theme ? 'selected' : ''} onClick={() => onChange({ theme })}>
+              <span>{themeLabels[theme]}</span><span className="radio-mark" aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h2>Доска</h2>
+        <div className="choice-list">
+          {BOARD_SKINS.map((boardSkin) => (
+            <button type="button" key={boardSkin} className={preferences.boardSkin === boardSkin ? 'selected' : ''} onClick={() => onChange({ boardSkin })}>
+              <span>{boardLabels[boardSkin]}</span><span className="radio-mark" aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-section danger-zone">
+        <h2>Локальная база</h2>
+        <p>Сейчас на устройстве: {stats.games} партий и {stats.positions} уникальных позиций.</p>
+        <button type="button" className="danger-button full-width" onClick={onClear} disabled={stats.games === 0}>Очистить локальный корпус</button>
+      </section>
+    </div>
   );
 }
 
-interface EmptyStateProps {
-  title: string;
-  text: string;
-  action?: string;
-  onAction?: () => void;
-}
-
-function EmptyState({ title, text, action, onAction }: EmptyStateProps) {
+function EmptyState({ title, text, action, onAction }: { title: string; text: string; action?: string; onAction?: () => void }) {
   return (
     <section className="empty-mobile">
       <div className="empty-symbol" aria-hidden="true"><Icon name="position" size={28} /></div>
@@ -436,7 +562,7 @@ function EmptyState({ title, text, action, onAction }: EmptyStateProps) {
   );
 }
 
-function ResultStats({ report }: { report: ReturnType<CorpusIndex['report']> }) {
+function ResultStats({ report }: { report: PositionDbReport }) {
   const decided = report.whiteWins + report.draws + report.blackWins;
   const percent = (value: number) => decided === 0 ? 0 : Math.round((value / decided) * 100);
   return (
@@ -448,40 +574,41 @@ function ResultStats({ report }: { report: ReturnType<CorpusIndex['report']> }) 
   );
 }
 
-function ContinuationList({ report, limit }: { report: ReturnType<CorpusIndex['report']>; limit?: number }) {
+function ContinuationList({ report, limit }: { report: PositionDbReport; limit?: number }) {
   const items = typeof limit === 'number' ? report.continuations.slice(0, limit) : report.continuations;
   if (items.length === 0) return <p className="muted-mobile">Нет продолжений из этой позиции.</p>;
   return (
     <div className="continuation-list-mobile">
       <h3>Продолжения</h3>
       {items.map((item) => (
-        <div key={item.move}>
-          <code>{item.move}</code>
-          <span>{item.games} партий</span>
-        </div>
+        <div key={item.move}><code>{item.move}</code><span>{item.games} партий</span></div>
       ))}
     </div>
   );
 }
 
-interface ToolCardProps {
-  icon: IconName;
-  title: string;
-  text: string;
-  status: string;
-}
-
-function ToolCard({ icon, title, text, status }: ToolCardProps) {
+function ToolCard({ icon, title, text }: { icon: IconName; title: string; text: string }) {
   return (
-    <article className="tool-card mobile-card">
+    <article className="tool-card mobile-card planned-tool">
       <div className="tool-icon" aria-hidden="true"><Icon name={icon} size={22} /></div>
-      <div className="tool-copy">
-        <h2>{title}</h2>
-        <p>{text}</p>
-        <span>{status}</span>
-      </div>
+      <div className="tool-copy"><span className="planned-badge">В разработке</span><h2>{title}</h2><p>{text}</p></div>
     </article>
   );
+}
+
+function ImportStatus({ progress }: { progress: ImportProgress }) {
+  return (
+    <div className="import-report-mobile import-progress">
+      <p><strong>{progress.done ? 'Импорт завершён' : 'Импорт идёт в фоне…'}</strong></p>
+      <p>Разобрано: {progress.parsed}</p>
+      <p>Добавлено: {progress.imported} · уже было: {progress.skipped} · ошибок: {progress.errors}</p>
+      {progress.lastError && <p className="import-last-error">Последняя ошибка: {progress.lastError}</p>}
+    </div>
+  );
+}
+
+function emptyReport(position: Position): PositionDbReport {
+  return { key: positionKey(position), occurrences: 0, whiteWins: 0, draws: 0, blackWins: 0, continuations: [] };
 }
 
 function pluralGames(value: number): string {
