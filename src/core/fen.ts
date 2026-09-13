@@ -8,8 +8,8 @@ interface ParsedSide {
 }
 
 /**
- * Reads common PDN FEN such as W:W21-32:B1-12.
- * Individual squares may also be algebraic (for example Ka1).
+ * Reads PDN FEN for Russian draughts. Algebraic coordinates are native here.
+ * Numeric square lists are accepted only for compatibility with external archives.
  */
 export function parseFen(fen: string): Position {
   const parts = fen.trim().split(':');
@@ -64,19 +64,19 @@ function expandSquareToken(token: string): number[] {
   }
   if (/^\d{1,2}$/.test(token)) {
     const square = Number(token);
-    bit(square); // validates bounds
+    bit(square);
     return [square];
   }
   return [algebraicToSquare(token)];
 }
 
-export function toFen(position: Position, notation: 'numeric' | 'algebraic' = 'numeric'): string {
+export function toFen(position: Position, notation: 'algebraic' | 'numeric' = 'algebraic'): string {
   const white = formatPieces(position.whiteMen, position.whiteKings, notation);
   const black = formatPieces(position.blackMen, position.blackKings, notation);
   return `${position.sideToMove}:W${white}:B${black}`;
 }
 
-function formatPieces(men: number, kings: number, notation: 'numeric' | 'algebraic'): string {
+function formatPieces(men: number, kings: number, notation: 'algebraic' | 'numeric'): string {
   const values: string[] = [];
   for (let square = 1; square <= 32; square += 1) {
     const mask = bit(square);
@@ -86,4 +86,3 @@ function formatPieces(men: number, kings: number, notation: 'numeric' | 'algebra
   }
   return values.join(',');
 }
-
