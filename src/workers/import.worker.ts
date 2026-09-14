@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 
+import { detectPdnEncoding, type PdnTextEncoding } from '../corpus/encoding';
 import { iterateGameSources, parsePdnGameSource, type PdnGame } from '../corpus/pdn';
 import { iterateGameSourcesFromBlob } from '../corpus/pdnStream';
 import { getCorpusStats, storeGamesBatch } from '../storage/corpusDb';
@@ -11,20 +12,32 @@ type ImportRequest =
   | { type: 'import-file'; file: File };
 
 export type ImportWorkerMessage =
-  | { type: 'progress'; parsed: number; imported: number; skipped: number; errors: number; lastError?: string }
-  | { type: 'done'; parsed: number; imported: number; skipped: number; errors: number; games: number; positions: number }
+  | { type: 'progress'; parsed: number; imported: number; skipped: number; errors: number; encoding?: PdnTextEncoding; lastError?: string }
+  | { type: 'done'; parsed: number; imported: number; skipped: number; errors: number; games: number; positions: number; encoding?: PdnTextEncoding }
   | { type: 'fatal'; message: string };
 
 self.onmessage = (event: MessageEvent<ImportRequest>) => {
   const request = event.data;
   if (request.type === 'import-text') {
-    void importSources(iterateGameSources(request.text));
+    void importSources(iterateGameSources(request.text), 'utf-8');
   } else if (request.type === 'import-file') {
-    void importSources(iterateGameSourcesFromBlob(request.file));
+    void importFile(request.file);
   }
 };
 
-async function importSources(sources: Iterable<string> | AsyncIterable<string>): Promise<void> {
+async function importFile(file: File): Promise<void> {
+  try {
+    const encoding = await detectPdnEncoding(file);
+    await importSources(iterateGameSourcesFromBlob(file, encoding), encoding);
+  } catch (error) {
+    reportFatal(error);
+  }
+}
+
+async function importSources(
+  sources: Iterable<string> | AsyncIterable<string>,
+  encoding?: PdnTextEncoding,
+): Promise<void> {
   let parsed = 0;
   let imported = 0;
   let skipped = 0;
@@ -32,6 +45,7 @@ async function importSources(sources: Iterable<string> | AsyncIterable<string>):
   let batch: PdnGame[] = [];
 
   try {
+    postProgress();
     for await (const source of sources) {
       parsed += 1;
       try {
@@ -66,13 +80,14 @@ async function importSources(sources: Iterable<string> | AsyncIterable<string>):
       errors,
       games: stats.games,
       positions: stats.positions,
+      encoding,
     } satisfies ImportWorkerMessage);
   } catch (error) {
     reportFatal(error);
   }
 
   function postProgress(lastError?: string): void {
-    postMessage({ type: 'progress', parsed, imported, skipped, errors, lastError } satisfies ImportWorkerMessage);
+    postMessage({ type: 'progress', parsed, imported, skipped, errors, encoding, lastError } satisfies ImportWorkerMessage);
   }
 }
 
