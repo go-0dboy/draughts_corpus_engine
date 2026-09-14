@@ -1,0 +1,11 @@
+/* The bottom navigation already identifies the Parties section. Keep the first
+ * useful control — search — at the top of the screen and do not spend vertical
+ * space on corpus counters here. Database metrics remain available in Import,
+ * Tools and Settings. */
+.corpus-mini-stats {
+  display: none !important;
+}
+
+.compact-overview {
+  padding-top: 6px;
+}
