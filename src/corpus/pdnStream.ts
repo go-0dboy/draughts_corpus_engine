@@ -1,12 +1,18 @@
+import { detectPdnEncoding, type PdnTextEncoding } from './encoding';
+
 const TAG_LINE = /^\s*\[[A-Za-z0-9_]+\s+"(?:\\.|[^"])*"\]\s*$/;
 
 /**
  * Incremental counterpart of iterateGameSources(). It keeps only the current
  * game in memory and can therefore consume very large Blob/File inputs.
  */
-export async function* iterateGameSourcesFromBlob(blob: Blob): AsyncGenerator<string> {
+export async function* iterateGameSourcesFromBlob(
+  blob: Blob,
+  encoding?: PdnTextEncoding,
+): AsyncGenerator<string> {
+  const resolvedEncoding = encoding ?? await detectPdnEncoding(blob);
   const reader = blob.stream().getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder(resolvedEncoding);
   const splitter = new GameSourceSplitter();
   let pending = '';
 
