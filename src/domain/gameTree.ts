@@ -23,6 +23,14 @@ export interface GameTree {
   children: readonly GameTreeNode[];
 }
 
+/** Runtime-only navigation metadata. The serializable tree itself stays acyclic. */
+export interface GameTreeIndexEntry {
+  node: GameTreeNode;
+  parentId?: string;
+  /** Zero-based ply inside the game tree. Variations at the same move share a ply. */
+  ply: number;
+}
+
 export function mainLine(tree: GameTree): readonly GameTreeNode[] {
   const nodes: GameTreeNode[] = [];
   let children = tree.children;
@@ -32,6 +40,24 @@ export function mainLine(tree: GameTree): readonly GameTreeNode[] {
     children = node.children;
   }
   return nodes;
+}
+
+/**
+ * Builds a lightweight lookup table only while a game is open.
+ * Parent references are deliberately derived here rather than stored in GameTree.
+ */
+export function indexGameTree(tree: GameTree): ReadonlyMap<string, GameTreeIndexEntry> {
+  const index = new Map<string, GameTreeIndexEntry>();
+
+  const walk = (nodes: readonly GameTreeNode[], parentId: string | undefined, ply: number): void => {
+    for (const node of nodes) {
+      index.set(node.id, { node, parentId, ply });
+      walk(node.children, node.id, ply + 1);
+    }
+  };
+
+  walk(tree.children, undefined, 0);
+  return index;
 }
 
 export function countTreeNodes(tree: GameTree): number {
