@@ -6,6 +6,7 @@ import './styles.css';
 import './theme.css';
 import './board.css';
 import './app-v2.css';
+import './layout-fixes.css';
 
 applyPreferences();
 
