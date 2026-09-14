@@ -15,9 +15,10 @@ export interface ImportProgress {
 
 export function importCorpusFile(
   file: File,
+  encoding: PdnTextEncoding | undefined,
   onProgress: (progress: ImportProgress) => void,
 ): Promise<ImportProgress> {
-  return runImport({ type: 'import-file', file }, onProgress);
+  return runImport({ type: 'import-file', file, encoding }, onProgress);
 }
 
 export function importCorpusText(
@@ -28,7 +29,9 @@ export function importCorpusText(
 }
 
 function runImport(
-  request: { type: 'import-file'; file: File } | { type: 'import-text'; text: string },
+  request:
+    | { type: 'import-file'; file: File; encoding?: PdnTextEncoding }
+    | { type: 'import-text'; text: string },
   onProgress: (progress: ImportProgress) => void,
 ): Promise<ImportProgress> {
   return new Promise((resolve, reject) => {
