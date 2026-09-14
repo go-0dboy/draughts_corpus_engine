@@ -1,3 +1,4 @@
+import type { PdnTextEncoding } from '../corpus/encoding';
 import type { ImportWorkerMessage } from '../workers/import.worker';
 
 export interface ImportProgress {
@@ -7,6 +8,7 @@ export interface ImportProgress {
   errors: number;
   games?: number;
   positions?: number;
+  encoding?: PdnTextEncoding;
   lastError?: string;
   done: boolean;
 }
