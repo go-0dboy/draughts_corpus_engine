@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { squareToRowCol } from '../core/board';
-import { EMPTY_POSITION, INITIAL_POSITION, setPiece } from '../core/position';
+import { EMPTY_POSITION, INITIAL_POSITION, pieceAt, setPiece } from '../core/position';
 import type { Piece, Position } from '../core/types';
 import { Board, type BoardOrientation } from './Board';
 import { Icon } from './Icon';
 
-export type PositionTool = Piece | 'erase';
+export type PositionTool = Piece;
 
 interface PositionEditorProps {
   position: Position;
@@ -19,25 +19,25 @@ const TOOLS: Array<{ id: PositionTool; label: string }> = [
   { id: 'white-king', label: 'Белая дамка' },
   { id: 'black-man', label: 'Чёрная шашка' },
   { id: 'black-king', label: 'Чёрная дамка' },
-  { id: 'erase', label: 'Удалить' },
 ];
 
 export function PositionEditor({ position, orientation, onChange, onFlip }: PositionEditorProps) {
   const [tool, setTool] = useState<PositionTool>('white-man');
 
   const place = (square: number) => {
-    if (tool === 'erase') {
-      onChange(setPiece(position, square, null));
-      return;
-    }
-
     const { row } = squareToRowCol(square);
     let piece: Piece = tool;
+
     // Same behaviour as the user's existing analyzer: a man placed directly on
     // the promotion rank becomes a king immediately.
     if (piece === 'white-man' && row === 0) piece = 'white-king';
     if (piece === 'black-man' && row === 7) piece = 'black-king';
-    onChange(setPiece(position, square, piece));
+
+    // Mobile-first toggle: tapping a square containing the currently selected
+    // piece removes it. A different piece is replaced immediately, so correcting
+    // a position never requires switching to a separate eraser tool.
+    const current = pieceAt(position, square);
+    onChange(setPiece(position, square, current === piece ? null : piece));
   };
 
   const setTurn = (sideToMove: Position['sideToMove']) => {
@@ -59,14 +59,11 @@ export function PositionEditor({ position, orientation, onChange, onFlip }: Posi
             aria-label={item.label}
             title={item.label}
           >
-            {item.id === 'erase' ? (
-              <span className="setup-eraser" aria-hidden="true">×</span>
-            ) : (
-              <span className={`setup-piece ${item.id} ${item.id.endsWith('king') ? 'king' : 'man'}`} aria-hidden="true" />
-            )}
+            <span className={`setup-piece ${item.id} ${item.id.endsWith('king') ? 'king' : 'man'}`} aria-hidden="true" />
           </button>
         ))}
       </div>
+      <p className="position-editor-hint">Повторное касание выбранной фигуры удаляет её.</p>
 
       <div className="position-editor-controls">
         <div className="turn-segment" role="group" aria-label="Сторона хода">
