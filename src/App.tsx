@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  inspectPdnEncoding,
+  PDN_ENCODING_OPTIONS,
+  pdnEncodingLabel,
+  previewPdnEncoding,
+  type PdnHeaderPreview,
+} from './application/encodingPreview';
 import { importCorpusFile, importCorpusText, type ImportProgress } from './application/importCorpus';
 import {
   APP_THEMES,
@@ -13,10 +20,12 @@ import {
 import { Board, type BoardOrientation } from './components/Board';
 import { BottomNav, type AppTab } from './components/BottomNav';
 import { Icon, type IconName } from './components/Icon';
+import { PositionEditor } from './components/PositionEditor';
 import { parseFen, toFen } from './core/fen';
 import { INITIAL_POSITION, positionKey } from './core/position';
 import { parseRussianMove } from './core/russianMove';
 import type { Position } from './core/types';
+import type { PdnTextEncoding } from './corpus/encoding';
 import type { PdnGame } from './corpus/pdn';
 import {
   clearCorpusDatabase,
@@ -75,6 +84,13 @@ function App() {
   const [pdnText, setPdnText] = useState(SAMPLE_PDN);
   const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [importError, setImportError] = useState('');
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
+  const [detectedEncoding, setDetectedEncoding] = useState<PdnTextEncoding | null>(null);
+  const [selectedEncoding, setSelectedEncoding] = useState<PdnTextEncoding | null>(null);
+  const [encodingPreview, setEncodingPreview] = useState<PdnHeaderPreview[]>([]);
+  const [encodingInspecting, setEncodingInspecting] = useState(false);
+  const [importRunning, setImportRunning] = useState(false);
+
   const [preferences, setPreferences] = useState<AppPreferences>(() => loadPreferences());
 
   const maxViewPly = selectedGame ? Math.max(0, selectedGame.positions.length - 1) : 0;
@@ -126,7 +142,8 @@ function App() {
     setShowOccurrences(false);
     setPositionOccurrences([]);
     setOccurrencesExhausted(false);
-    void refreshPositionReport(positionSearch);
+    const timer = window.setTimeout(() => void refreshPositionReport(positionSearch), 100);
+    return () => window.clearTimeout(timer);
   }, [positionSearch, refreshPositionReport]);
 
   useEffect(() => watchSystemAppearance((next) => setPreferences(next)), []);
@@ -176,21 +193,22 @@ function App() {
     }
   };
 
+  const updatePosition = (position: Position) => {
+    setPositionSearch(position);
+    setFenInput(toFen(position));
+    setPositionError('');
+  };
+
   const applyFen = () => {
     try {
-      const position = parseFen(fenInput);
-      setPositionSearch(position);
-      setFenInput(toFen(position));
-      setPositionError('');
+      updatePosition(parseFen(fenInput));
     } catch (error) {
       setPositionError(error instanceof Error ? error.message : 'Не удалось прочитать FEN.');
     }
   };
 
   const analyzePosition = (position: Position) => {
-    setPositionSearch({ ...position });
-    setFenInput(toFen(position));
-    setPositionError('');
+    updatePosition({ ...position });
     setPositionSheetOpen(false);
     switchTab('position');
   };
@@ -219,15 +237,52 @@ function App() {
     }
   };
 
-  const handleFileImport = async (file: File | undefined) => {
+  const handleFileSelected = async (file: File | undefined) => {
     if (!file) return;
     setImportError('');
-    setImportProgress({ parsed: 0, imported: 0, skipped: 0, errors: 0, done: false });
+    setImportProgress(null);
+    setPendingImportFile(file);
+    setDetectedEncoding(null);
+    setSelectedEncoding(null);
+    setEncodingPreview([]);
+    setEncodingInspecting(true);
     try {
-      await importCorpusFile(file, setImportProgress);
+      const inspection = await inspectPdnEncoding(file);
+      setDetectedEncoding(inspection.detected);
+      setSelectedEncoding(inspection.selected);
+      setEncodingPreview(inspection.preview);
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setEncodingInspecting(false);
+    }
+  };
+
+  const changeEncoding = async (encoding: PdnTextEncoding) => {
+    setSelectedEncoding(encoding);
+    if (!pendingImportFile) return;
+    setEncodingInspecting(true);
+    try {
+      setEncodingPreview(await previewPdnEncoding(pendingImportFile, encoding));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setEncodingInspecting(false);
+    }
+  };
+
+  const startFileImport = async () => {
+    if (!pendingImportFile || !selectedEncoding || importRunning) return;
+    setImportError('');
+    setImportRunning(true);
+    setImportProgress({ parsed: 0, imported: 0, skipped: 0, errors: 0, encoding: selectedEncoding, done: false });
+    try {
+      await importCorpusFile(pendingImportFile, selectedEncoding, setImportProgress);
       await Promise.all([refreshStats(), reloadGames(), refreshPositionReport(positionSearch)]);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImportRunning(false);
     }
   };
 
@@ -343,7 +398,6 @@ function App() {
         {view === 'games' && (
           <>
             <section className="screen-section content-top compact-overview">
-              <div className="corpus-mini-stats"><span><strong>{stats.games}</strong> партий</span><span><strong>{stats.positions}</strong> позиций</span></div>
               <label className="search-box">
                 <Icon name="search" size={21} />
                 <input type="search" value={gameQuery} onChange={(event) => setGameQuery(event.target.value)} placeholder="Игрок, турнир, год…" aria-label="Поиск партий" />
@@ -374,17 +428,13 @@ function App() {
 
         {view === 'position' && (
           <>
-            <section className="position-board-section content-top">
-              <Board position={positionSearch} orientation={boardOrientation} />
-              <div className="board-toolbar">
-                <span className="side-chip">Ход {positionSearch.sideToMove === 'W' ? 'белых' : 'чёрных'}</span>
-                <button className="compact-action" type="button" onClick={flipBoard}><Icon name="flip" size={19} /> Перевернуть</button>
-              </div>
-            </section>
+            <div className="content-top">
+              <PositionEditor position={positionSearch} orientation={boardOrientation} onChange={updatePosition} onFlip={flipBoard} />
+            </div>
 
             <details className="mobile-card fen-card">
-              <summary>Найти по FEN</summary>
-              <label htmlFor="position-fen">FEN позиции</label>
+              <summary>FEN позиции</summary>
+              <label htmlFor="position-fen">Буквенная запись позиции</label>
               <textarea id="position-fen" value={fenInput} onChange={(event) => setFenInput(event.target.value)} rows={3} spellCheck={false} />
               {positionError && <p className="inline-error">{positionError}</p>}
               <button type="button" className="primary-button full-width" onClick={applyFen}>Применить FEN</button>
@@ -403,10 +453,10 @@ function App() {
                 {isInitialPosition ? (
                   <>
                     <h2>Стартовая позиция</h2>
-                    <p>Почти каждая обычная партия начинается здесь, поэтому автоматически выводить десятки тысяч партий бессмысленно. Сначала смотри статистику первых ходов выше; список партий открывается только по запросу.</p>
+                    <p>Почти каждая обычная партия начинается здесь. Основная информация — частота первых ходов и статистика выше; список партий открывается только по запросу.</p>
                   </>
                 ) : (
-                  <><h2>Партии с этой позицией</h2><p>Список подгружается из индекса порциями, поэтому размер корпуса не влияет на интерфейс.</p></>
+                  <><h2>Партии с этой позицией</h2><p>Список читается из позиционного индекса порциями.</p></>
                 )}
                 {!showOccurrences && <button type="button" className="secondary-button full-width" onClick={() => void openOccurrences()}>Показать партии</button>}
                 {showOccurrences && (
@@ -430,12 +480,61 @@ function App() {
             <section className="import-hero mobile-card content-top">
               <div className="import-icon" aria-hidden="true"><Icon name="upload" size={28} /></div>
               <h2>Добавить корпус</h2>
-              <p>PDN разбирается в отдельном потоке и пакетами записывается в IndexedDB. Интерфейс больше не хранит весь корпус в памяти.</p>
+              <p>Сначала проверяем кодировку и показываем, как читаются имена игроков и турниры. Затем файл потоково импортируется в локальную базу.</p>
               <label className="primary-button file-picker full-width">
                 Выбрать .pdn
-                <input type="file" accept=".pdn,.txt,text/plain" onChange={(event) => void handleFileImport(event.target.files?.[0])} />
+                <input type="file" accept=".pdn,.txt,text/plain" disabled={importRunning} onChange={(event) => void handleFileSelected(event.target.files?.[0])} />
               </label>
+              {pendingImportFile && <p className="file-name-line">{pendingImportFile.name} · {formatBytes(pendingImportFile.size)}</p>}
             </section>
+
+            {pendingImportFile && (
+              <section className="encoding-panel">
+                <div className="encoding-panel-head">
+                  <div>
+                    <strong>Проверка кодировки</strong>
+                    <span>{encodingInspecting ? 'Читаем образец…' : 'Автоопределение выполнено первым'}</span>
+                  </div>
+                  {detectedEncoding && (
+                    <span className="encoding-auto-badge">Авто: {pdnEncodingLabel(detectedEncoding)}</span>
+                  )}
+                </div>
+
+                <label className="encoding-select-label">
+                  Кодировка файла
+                  <select
+                    value={selectedEncoding ?? ''}
+                    disabled={encodingInspecting || importRunning}
+                    onChange={(event) => void changeEncoding(event.target.value as PdnTextEncoding)}
+                  >
+                    {PDN_ENCODING_OPTIONS.map((encoding) => (
+                      <option value={encoding} key={encoding}>{pdnEncodingLabel(encoding)}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="encoding-preview" aria-live="polite">
+                  {encodingInspecting ? (
+                    <div className="encoding-preview-empty">Формируем предпросмотр…</div>
+                  ) : encodingPreview.length === 0 ? (
+                    <div className="encoding-preview-empty">В начале файла не удалось найти заголовки партий.</div>
+                  ) : (
+                    encodingPreview.map((row, index) => (
+                      <div className="encoding-preview-row" key={`${row.white}-${row.black}-${index}`}>
+                        <strong>{row.white} — {row.black}</strong>
+                        <span>{[row.event, row.site].filter((value) => value && value !== '—').join(' · ') || 'Турнир/место не указаны'}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="encoding-actions">
+                  <button type="button" className="primary-button full-width" disabled={!selectedEncoding || encodingInspecting || importRunning} onClick={() => void startFileImport()}>
+                    {importRunning ? 'Импорт идёт…' : selectedEncoding === detectedEncoding ? 'Импортировать (авто)' : 'Импортировать с выбранной кодировкой'}
+                  </button>
+                </div>
+              </section>
+            )}
 
             <section className="mobile-card">
               <h2>Локальная база</h2>
@@ -462,8 +561,8 @@ function App() {
           <>
             <section className="mobile-card content-top tools-explainer">
               <span className="section-kicker">Расширяемое ядро</span>
-              <h2>Инструменты — это модули анализа корпуса</h2>
-              <p>Они не являются отдельными базами или режимами игры. Каждый модуль получает позиции и партии из общего ядра. Доступные инструменты можно открывать, будущие явно помечены как находящиеся в разработке.</p>
+              <h2>Инструменты — модули анализа корпуса</h2>
+              <p>Каждый модуль работает через общее ядро и единый Corpus API. Новые инструменты можно добавлять без изменения формата партий и позиций.</p>
             </section>
 
             <section className="mobile-card available-tool">
@@ -471,7 +570,7 @@ function App() {
               <div className="tool-copy">
                 <span className="available-badge">Доступно</span>
                 <h2>Статистика корпуса</h2>
-                <p>Быстрая проверка размера локальной базы. Подробная аналитика повторов и дебютов будет строиться здесь же поверх индексов.</p>
+                <p>Размер локального корпуса и позиционного словаря.</p>
                 <div className="metric-grid"><div><strong>{stats.games}</strong><span>партий</span></div><div><strong>{stats.positions}</strong><span>позиций</span></div></div>
               </div>
             </section>
@@ -600,6 +699,7 @@ function ImportStatus({ progress }: { progress: ImportProgress }) {
   return (
     <div className="import-report-mobile import-progress">
       <p><strong>{progress.done ? 'Импорт завершён' : 'Импорт идёт в фоне…'}</strong></p>
+      {progress.encoding && <p>Кодировка: {pdnEncodingLabel(progress.encoding)}</p>}
       <p>Разобрано: {progress.parsed}</p>
       <p>Добавлено: {progress.imported} · уже было: {progress.skipped} · ошибок: {progress.errors}</p>
       {progress.lastError && <p className="import-last-error">Последняя ошибка: {progress.lastError}</p>}
@@ -617,6 +717,12 @@ function pluralGames(value: number): string {
   if (mod10 === 1 && mod100 !== 11) return 'партия';
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'партии';
   return 'партий';
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} Б`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} КБ`;
+  return `${(value / (1024 * 1024)).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} МБ`;
 }
 
 export default App;
