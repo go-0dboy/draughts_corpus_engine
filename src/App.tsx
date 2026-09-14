@@ -8,6 +8,11 @@ import {
 } from './application/encodingPreview';
 import { importCorpusFile, importCorpusText, type ImportProgress } from './application/importCorpus';
 import {
+  canSelectViewerNode,
+  getViewerNavigation,
+  nodeIdAtMainLinePly,
+} from './application/viewerNavigation';
+import {
   APP_THEMES,
   BOARD_SKINS,
   loadPreferences,
@@ -19,6 +24,7 @@ import {
 } from './application/preferences';
 import { Board, type BoardOrientation } from './components/Board';
 import { BottomNav, type AppTab } from './components/BottomNav';
+import { GameTreeNotation } from './components/GameTreeNotation';
 import { Icon, type IconName } from './components/Icon';
 import { PositionEditor } from './components/PositionEditor';
 import { parseFen, toFen } from './core/fen';
@@ -27,6 +33,7 @@ import { parseRussianMove } from './core/russianMove';
 import type { Position } from './core/types';
 import type { PdnTextEncoding } from './corpus/encoding';
 import type { PdnGame } from './corpus/pdn';
+import { resolvePdnSource, type ResolvedPdnTree } from './pdn/resolver';
 import {
   clearCorpusDatabase,
   getCorpusStats,
@@ -68,6 +75,8 @@ function App() {
   const [selectedGame, setSelectedGame] = useState<PdnGame | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [ply, setPly] = useState(0);
+  const [resolvedViewer, setResolvedViewer] = useState<ResolvedPdnTree | null>(null);
+  const [activeViewerNodeId, setActiveViewerNodeId] = useState<string | null>(null);
   const [viewerReport, setViewerReport] = useState<PositionDbReport | null>(null);
   const [positionSheetOpen, setPositionSheetOpen] = useState(false);
 
@@ -95,20 +104,25 @@ function App() {
 
   const maxViewPly = selectedGame ? Math.max(0, selectedGame.positions.length - 1) : 0;
   const safePly = Math.min(ply, maxViewPly);
-  const currentPosition = selectedGame?.positions[safePly] ?? null;
+  const viewerNavigation = useMemo(
+    () => resolvedViewer ? getViewerNavigation(resolvedViewer, activeViewerNodeId) : null,
+    [resolvedViewer, activeViewerNodeId],
+  );
+  const currentPosition = viewerNavigation?.position ?? selectedGame?.positions[safePly] ?? null;
+  const currentViewerPly = viewerNavigation?.ply ?? safePly;
+  const currentViewerNotation = viewerNavigation?.activeNode?.move.sourceNotation
+    ?? (safePly > 0 ? selectedGame?.moves[safePly - 1] : undefined);
   const isInitialPosition = positionKey(positionSearch) === positionKey(INITIAL_POSITION);
 
   const highlightedSquares = useMemo(() => {
-    if (!selectedGame || safePly === 0) return [];
-    const notation = selectedGame.moves[safePly - 1];
-    if (!notation) return [];
+    if (!currentViewerNotation) return [];
     try {
-      const move = parseRussianMove(notation);
+      const move = parseRussianMove(currentViewerNotation);
       return [move.path[0], move.path[move.path.length - 1]];
     } catch {
       return [];
     }
-  }, [selectedGame, safePly]);
+  }, [currentViewerNotation]);
 
   const refreshStats = useCallback(async () => {
     setStats(await getCorpusStats());
@@ -172,8 +186,20 @@ function App() {
       const game = await loadGameForViewer(gameId);
       if (!game) return;
       if (view !== 'viewer') setLastTab(view as AppTab);
+
+      const clampedPly = Math.max(0, Math.min(targetPly, Math.max(0, game.positions.length - 1)));
+      let resolved: ResolvedPdnTree | null = null;
+      try {
+        resolved = resolvePdnSource(game.source);
+      } catch {
+        // A malformed historical source must still remain viewable through the
+        // already reconstructed main line stored with the corpus record.
+      }
+
       setSelectedGame(game);
-      setPly(Math.max(0, Math.min(targetPly, Math.max(0, game.positions.length - 1))));
+      setPly(clampedPly);
+      setResolvedViewer(resolved);
+      setActiveViewerNodeId(resolved ? nodeIdAtMainLinePly(resolved, clampedPly) : null);
       setPositionSheetOpen(false);
       setView('viewer');
     } finally {
@@ -215,6 +241,11 @@ function App() {
 
   const flipBoard = () => {
     setBoardOrientation((value) => value === 'white' ? 'black' : 'white');
+  };
+
+  const selectViewerNode = (nodeId: string | null) => {
+    setActiveViewerNodeId(nodeId);
+    if (resolvedViewer) setPly(getViewerNavigation(resolvedViewer, nodeId).ply);
   };
 
   const openOccurrences = async () => {
@@ -304,6 +335,8 @@ function App() {
     if (!window.confirm('Удалить все партии и позиции из локальной базы на этом устройстве?')) return;
     await clearCorpusDatabase();
     setSelectedGame(null);
+    setResolvedViewer(null);
+    setActiveViewerNodeId(null);
     setPositionOccurrences([]);
     setShowOccurrences(false);
     await Promise.all([refreshStats(), reloadGames(), refreshPositionReport(positionSearch)]);
@@ -316,9 +349,9 @@ function App() {
           {viewerLoading && <p className="loading-line">Загрузка партии…</p>}
           {selectedGame && currentPosition && (
             <>
-              {selectedGame.replay.status === 'partial' && (
+              {(selectedGame.replay.status === 'partial' || (resolvedViewer && !resolvedViewer.complete)) && (
                 <div className="replay-notice" role="status">
-                  Позиции восстановлены до {maxViewPly}-го полухода из {selectedGame.moves.length}.
+                  Часть записи партии не удалось достоверно воспроизвести. Доступные позиции и варианты сохранены.
                 </div>
               )}
 
@@ -338,25 +371,59 @@ function App() {
               </section>
 
               <section className="current-move-line" aria-live="polite">
-                <span>{safePly === 0 ? 'Начало партии' : `Полуход ${safePly}`}</span>
-                <strong>{safePly > 0 ? selectedGame.moves[safePly - 1] : 'Стартовая позиция'}</strong>
+                <span>{currentViewerPly === 0 ? 'Начало партии' : `Позиция ${currentViewerPly}`}</span>
+                <strong>{currentViewerNotation ?? 'Стартовая позиция'}</strong>
               </section>
 
               <section className="move-controller" aria-label="Навигация по партии">
-                <button type="button" aria-label="В начало" onClick={() => setPly(0)} disabled={safePly === 0}><Icon name="first" /></button>
-                <button type="button" aria-label="Предыдущий ход" onClick={() => setPly(Math.max(0, safePly - 1))} disabled={safePly === 0}><Icon name="previous" /></button>
-                <div><strong>{safePly}</strong><span>из {maxViewPly}</span></div>
-                <button type="button" aria-label="Следующий ход" onClick={() => setPly(Math.min(maxViewPly, safePly + 1))} disabled={safePly >= maxViewPly}><Icon name="next" /></button>
-                <button type="button" aria-label="В конец" onClick={() => setPly(maxViewPly)} disabled={safePly >= maxViewPly}><Icon name="last" /></button>
+                <button
+                  type="button"
+                  aria-label="В начало"
+                  onClick={() => resolvedViewer ? selectViewerNode(null) : setPly(0)}
+                  disabled={resolvedViewer ? !activeViewerNodeId : safePly === 0}
+                ><Icon name="first" /></button>
+                <button
+                  type="button"
+                  aria-label="Предыдущий ход"
+                  onClick={() => resolvedViewer ? selectViewerNode(viewerNavigation?.previousNodeId ?? null) : setPly(Math.max(0, safePly - 1))}
+                  disabled={resolvedViewer ? !activeViewerNodeId : safePly === 0}
+                ><Icon name="previous" /></button>
+                <div><strong>{currentViewerPly}</strong><span>{resolvedViewer ? 'позиция' : `из ${maxViewPly}`}</span></div>
+                <button
+                  type="button"
+                  aria-label="Следующий ход"
+                  onClick={() => resolvedViewer ? selectViewerNode(viewerNavigation?.nextNodeId ?? null) : setPly(Math.min(maxViewPly, safePly + 1))}
+                  disabled={resolvedViewer ? !viewerNavigation?.nextNodeId : safePly >= maxViewPly}
+                ><Icon name="next" /></button>
+                <button
+                  type="button"
+                  aria-label="В конец ветки"
+                  onClick={() => resolvedViewer ? selectViewerNode(viewerNavigation?.lastNodeId ?? null) : setPly(maxViewPly)}
+                  disabled={resolvedViewer
+                    ? !viewerNavigation?.lastNodeId || viewerNavigation.lastNodeId === activeViewerNodeId
+                    : safePly >= maxViewPly}
+                ><Icon name="last" /></button>
               </section>
 
-              <section className="move-strip" aria-label="Ходы партии">
-                {selectedGame.moves.slice(0, maxViewPly).map((move, index) => (
-                  <button type="button" key={`${move}-${index}`} className={safePly === index + 1 ? 'active' : ''} onClick={() => setPly(index + 1)}>
-                    <span>{index + 1}</span>{move}
-                  </button>
-                ))}
-              </section>
+              {resolvedViewer ? (
+                <section className="viewer-notation-shell" aria-label="Нотация партии">
+                  <GameTreeNotation
+                    tree={resolvedViewer.tree}
+                    activeNodeId={activeViewerNodeId ?? undefined}
+                    startPly={resolvedViewer.tree.initialPosition?.sideToMove === 'B' ? 1 : 0}
+                    onSelectNode={(node) => selectViewerNode(node.id)}
+                    canSelectNode={(node) => canSelectViewerNode(resolvedViewer, node)}
+                  />
+                </section>
+              ) : (
+                <section className="move-strip" aria-label="Ходы партии">
+                  {selectedGame.moves.slice(0, maxViewPly).map((move, index) => (
+                    <button type="button" key={`${move}-${index}`} className={safePly === index + 1 ? 'active' : ''} onClick={() => setPly(index + 1)}>
+                      <span>{index + 1}</span>{move}
+                    </button>
+                  ))}
+                </section>
+              )}
 
               {viewerReport && (
                 <button type="button" className="position-insight" onClick={() => setPositionSheetOpen(true)} aria-haspopup="dialog">
