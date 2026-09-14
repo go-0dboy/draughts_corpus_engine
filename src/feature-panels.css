@@ -4,9 +4,9 @@
 }
 .position-editor .board-frame { width: 100%; }
 .position-editor-palette {
-  margin: 10px 0 8px;
+  margin: 10px 0 4px;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 7px;
 }
 .position-editor-palette button {
@@ -53,10 +53,12 @@
   border: 2px solid currentColor;
   border-radius: 50%;
 }
-.setup-eraser {
-  font-size: 1.75rem;
-  line-height: 1;
-  font-weight: 300;
+.position-editor-hint {
+  margin: 0 2px 9px;
+  color: var(--on-surface-muted);
+  font-size: .68rem;
+  line-height: 1.35;
+  text-align: center;
 }
 .position-editor-controls {
   display: grid;
