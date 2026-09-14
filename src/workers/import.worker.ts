@@ -9,7 +9,7 @@ const BATCH_SIZE = 100;
 
 type ImportRequest =
   | { type: 'import-text'; text: string }
-  | { type: 'import-file'; file: File };
+  | { type: 'import-file'; file: File; encoding?: PdnTextEncoding };
 
 export type ImportWorkerMessage =
   | { type: 'progress'; parsed: number; imported: number; skipped: number; errors: number; encoding?: PdnTextEncoding; lastError?: string }
@@ -21,13 +21,13 @@ self.onmessage = (event: MessageEvent<ImportRequest>) => {
   if (request.type === 'import-text') {
     void importSources(iterateGameSources(request.text), 'utf-8');
   } else if (request.type === 'import-file') {
-    void importFile(request.file);
+    void importFile(request.file, request.encoding);
   }
 };
 
-async function importFile(file: File): Promise<void> {
+async function importFile(file: File, requestedEncoding?: PdnTextEncoding): Promise<void> {
   try {
-    const encoding = await detectPdnEncoding(file);
+    const encoding = requestedEncoding ?? await detectPdnEncoding(file);
     await importSources(iterateGameSourcesFromBlob(file, encoding), encoding);
   } catch (error) {
     reportFatal(error);
