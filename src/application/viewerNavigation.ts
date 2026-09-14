@@ -38,15 +38,16 @@ export function getViewerNavigation(
   if (!initialPosition) throw new Error('У дерева партии отсутствует начальная позиция.');
 
   const index = indexGameTree(resolved.tree);
-  const entry = activeNodeId ? index.get(activeNodeId) : undefined;
-  const activeNode = entry?.node ?? null;
+  const rawEntry = activeNodeId ? index.get(activeNodeId) : undefined;
   const activePosition = activeNodeId ? resolved.positionsByNodeId[activeNodeId] : undefined;
-  const position = activePosition ?? initialPosition;
+  const entry = rawEntry && activePosition ? rawEntry : undefined;
+  const activeNode = entry?.node ?? null;
+  const position = activePosition && entry ? activePosition : initialPosition;
 
   const nextCandidate = activeNode ? activeNode.children[0] : resolved.tree.children[0];
   const nextNodeId = selectableNodeId(resolved, nextCandidate);
 
-  let lastNodeId: string | null = activeNodeId;
+  let lastNodeId: string | null = entry ? entry.node.id : null;
   let cursor = nextCandidate;
   while (cursor && resolved.positionsByNodeId[cursor.id]) {
     lastNodeId = cursor.id;
@@ -54,10 +55,10 @@ export function getViewerNavigation(
   }
 
   return {
-    activeNodeId: activeNodeId && entry && activePosition ? activeNodeId : null,
-    activeNode: activeNodeId && entry && activePosition ? activeNode : null,
+    activeNodeId: entry ? entry.node.id : null,
+    activeNode,
     position,
-    ply: entry && activePosition ? entry.ply + 1 : 0,
+    ply: entry ? entry.ply + 1 : 0,
     previousNodeId: entry?.parentId ?? null,
     nextNodeId,
     lastNodeId,
