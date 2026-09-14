@@ -1,0 +1,28 @@
+.viewer-notation-shell {
+  margin: 8px 0 10px;
+  border-radius: 18px;
+  background: var(--surface-container-low);
+  overflow: hidden;
+}
+
+.viewer-notation-shell .notation-tree {
+  max-height: min(26dvh, 210px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 8px 10px 12px;
+}
+
+.viewer-notation-shell .notation-move {
+  min-height: 38px;
+}
+
+.viewer-notation-shell .notation-move:disabled {
+  opacity: .45;
+}
+
+@media (max-height: 720px) {
+  .viewer-notation-shell .notation-tree {
+    max-height: 145px;
+  }
+}
