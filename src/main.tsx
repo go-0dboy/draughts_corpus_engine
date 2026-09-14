@@ -7,6 +7,7 @@ import './theme.css';
 import './board.css';
 import './app-v2.css';
 import './layout-fixes.css';
+import './feature-panels.css';
 
 applyPreferences();
 
